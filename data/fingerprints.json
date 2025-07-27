@@ -1,0 +1,359 @@
+[
+  {
+    "version": "Mailman 2.1.39",
+    "method": "header",
+    "location": "headers.X-Mailman-Version",
+    "pattern": "^2\\.1\\.39$",
+    "notes": "Specific Mailman 2.1.39 version header"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "header",
+    "location": "headers.Server",
+    "pattern": "Mailman",
+    "notes": "Mailman string present in Server header"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "body",
+    "location": "body",
+    "pattern": "Powered by Mailman 2",
+    "notes": "Common phrase in Mailman 2 HTML pages"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "body",
+    "location": "body",
+    "pattern": "mailto:listadmin@",
+    "notes": "Typical Mailman 2 list admin mailto pattern"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "body",
+    "location": "body",
+    "pattern": "Powered by Mailman 3",
+    "notes": "Common phrase in Mailman 3 HTML pages"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "url",
+    "location": "/mailman/api/",
+    "pattern": "",
+    "notes": "Presence of Mailman 3 REST API endpoint"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "url",
+    "location": "/postorius/",
+    "pattern": "",
+    "notes": "Postorius web UI presence"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "url",
+    "location": "/hyperkitty/",
+    "pattern": "",
+    "notes": "HyperKitty archive interface"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "header",
+    "location": "headers.X-Mailman-Version",
+    "pattern": "^3\\.\\d+\\.\\d+$",
+    "notes": "Generic Mailman 3 version header pattern"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "header",
+    "location": "headers.Server",
+    "pattern": "Mailman",
+    "notes": "Mailman string in Server header for version 3"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "body",
+    "location": "body",
+    "pattern": "listinfo\\.cgi",
+    "notes": "Old style CGI script references"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman version 2",
+    "notes": "Explicit mention of version 2 in page"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman version 3",
+    "notes": "Explicit mention of version 3 in page"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "header",
+    "location": "headers.X-Mailman-Release",
+    "pattern": "^3\\.",
+    "notes": "X-Mailman-Release header starts with 3"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "header",
+    "location": "headers.X-Mailman-Release",
+    "pattern": "^2\\.",
+    "notes": "X-Mailman-Release header starts with 2"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "GNU Mailman",
+    "notes": "Common generic fingerprint string"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman mailing list overview",
+    "notes": "Common phrase in Mailman pages"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "List Administrator Interface",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "overview of mailing lists",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "The list overview page has been disabled",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "This page contains a summary of all Mailman mailing lists",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman CGI error",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "List Configuration",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "General list information page",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "If you are having trouble using the lists",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Editing the public HTML pages",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Configuration Categories",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Subscription rules",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Privacy options",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Digest options",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Archiving Options",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Bounce Processing",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Filtering Rules",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Membership Management",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Tend to pending moderator requests",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "The Mailman administrator interface",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Enter your address and password",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Held Messages",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Moderator bit",
+    "notes": "Common phrase"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Postorius",
+    "notes": "Mailman 3 web UI"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "HyperKitty",
+    "notes": "Mailman 3 archive UI"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(powered|Powered) by mailman",
+    "notes": "Powered by Mailman phrase variations"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(Powered by GNU Mailman|This site is powered by GNU Mailman)",
+    "notes": "Common footer credits"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "version",
+    "notes": "Generic 'version' mention"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman version",
+    "notes": "Generic 'Mailman version' mention"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "mailman3",
+    "notes": "Mention of mailman3"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman\\s+version\\s*[:\\-]?\\s*([\\d\\.]+)",
+    "notes": "Regex for extracting version from body"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "GNU Mailman\\s*version\\s*[:\\-]?\\s*([\\d\\.]+)",
+    "notes": "Regex for extracting version from body"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman\\s*([\\d\\.]+)",
+    "notes": "Regex for extracting version from body"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "version\\s*[:\\-]?\\s*([\\d]+\\.[\\d]+\\.[\\d]+)",
+    "notes": "Regex for extracting full version"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "version\\s*[:\\-]?\\s*([\\d]+\\.[\\d]+)",
+    "notes": "Regex for extracting short version"
+  }
+]

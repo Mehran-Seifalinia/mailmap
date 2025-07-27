@@ -1,89 +1,36 @@
 from re import compile, escape, IGNORECASE
 from requests import Session, Timeout, ConnectionError, RequestException
 from urllib.parse import urljoin, urlparse
+from json import load, JSONDecodeError
+from logging import getLogger, basicConfig, INFO, error
+from typing import List
 
-COMMON_PATHS = [
-    "/mailman/listinfo",
-    "/cgi-bin/mailman/listinfo",
-    "/cgi-bin/mailman/admin",
-    "/cgi-bin/mailman/private",
-    "/cgi-bin/mailman/confirm",
-    "/cgi-bin/mailman/options",
-    "/cgi-bin/mailman/roster",
-    "/mailman/admin",
-    "/mailman/private",
-    "/mailman/confirm",
-    "/mailman/options",
-    "/mailman/roster",
-    "/mailman3/lists/",
-    "/mailman3/postorius/lists/",
-    "/mailman3/hyperkitty/",
-    "/hyperkitty/",
-    "/archives/",
-    "/archives/private/",
-    "/archives/public/",
-    "/pipermail/",
-    "/lists/",
-    "/listinfo",
-    "/admin",
-    "/mailman",
-    "/mailman3",
-    "/mm3",
-    "/cgi-bin/mailman",
-    "/cgi-bin/mailman3",
-    "/mailman/listinfo/mailman",
-    "/cgi-bin/mailman/listinfo/mailman",
-]
+# Setup logger
+logger = getLogger(__name__)
+if not logger.hasHandlers():
+    basicConfig(level=INFO, format='[%(levelname)s] %(message)s')
 
-FINGERPRINTS = [
-    "GNU Mailman",
-    "Mailman mailing list overview",
-    "List Administrator Interface",
-    "overview of mailing lists",
-    "The list overview page has been disabled",
-    "This page contains a summary of all Mailman mailing lists",
-    "Mailman CGI error",
-    "List Configuration",
-    "General list information page",
-    "If you are having trouble using the lists",
-    "Editing the public HTML pages",
-    "Configuration Categories",
-    "Subscription rules",
-    "Privacy options",
-    "Digest options",
-    "Archiving Options",
-    "Bounce Processing",
-    "Filtering Rules",
-    "Membership Management",
-    "Tend to pending moderator requests",
-    "The Mailman administrator interface",
-    "Enter your address and password",
-    "Held Messages",
-    "Moderator bit",
-    "Postorius",
-    "HyperKitty",
-    "powered by mailman",
-    "Powered by GNU Mailman",
-    "This site is powered by GNU Mailman",
-    "version",
-    "Mailman version",
-    "mailman3",
-]
-
-# Compile combined regex for better performance
-COMBINED_FINGERPRINTS_REGEX = compile(
-    "|".join(map(escape, FINGERPRINTS)),
-    flags=IGNORECASE
-)
+def load_json_file(filepath: str):
+    """Load JSON data from a file."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return load(f)
+    except FileNotFoundError:
+        logger.error(f"JSON file not found: {filepath}")
+    except JSONDecodeError:
+        logger.error(f"Invalid JSON format in file: {filepath}")
+    except Exception as e:
+        logger.error(f"Failed to load JSON file {filepath}: {e}")
+    return None
 
 def is_valid_url(url: str) -> bool:
     """Validate URL scheme and netloc."""
     parsed = urlparse(url)
     return all([parsed.scheme in ("http", "https"), parsed.netloc])
 
-def detect_mailman(base_url: str, timeout: int = 5) -> dict:
-    """Detect Mailman installation on target base URL."""
-    base_url = base_url.rstrip("/")  # Clean trailing slash
+def detect_mailman(base_url: str, common_paths: List[str], fingerprints: List[str], timeout: int = 5) -> dict:
+    """Detect Mailman installation on target base URL using given paths and fingerprints."""
+    base_url = base_url.rstrip("/")
 
     if not is_valid_url(base_url):
         return {
@@ -94,7 +41,10 @@ def detect_mailman(base_url: str, timeout: int = 5) -> dict:
     session = Session()
     session.headers.update({"User-Agent": "MailmapScanner/1.0"})
 
-    for path in COMMON_PATHS:
+    # Compile fingerprints regex once for performance
+    combined_fingerprint_regex = compile("|".join(map(escape, fingerprints)), flags=IGNORECASE)
+
+    for path in common_paths:
         full_url = urljoin(base_url + "/", path.lstrip("/"))
 
         try:
@@ -106,7 +56,7 @@ def detect_mailman(base_url: str, timeout: int = 5) -> dict:
 
             content = response.text[:100_000]  # Limit content size to 100KB
 
-            match = COMBINED_FINGERPRINTS_REGEX.search(content)
+            match = combined_fingerprint_regex.search(content)
             if match:
                 return {
                     "found": True,
@@ -124,6 +74,16 @@ def detect_mailman(base_url: str, timeout: int = 5) -> dict:
     }
 
 if __name__ == "__main__":
+    import sys
+
+    # Load data files
+    common_paths = load_json_file("data/common_paths.json")
+    fingerprints = load_json_file("data/fingerprints.json")
+
+    if common_paths is None or fingerprints is None:
+        logger.error("Failed to load required data files. Exiting.")
+        sys.exit(1)
+
     target = input("Enter target base URL (e.g., https://example.com): ").strip()
-    result = detect_mailman(target)
+    result = detect_mailman(target, common_paths, fingerprints)
     print(result)

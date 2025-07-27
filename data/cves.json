@@ -1,0 +1,90 @@
+[
+  {
+    "id": "CVE-2025-43919",
+    "title": "Directory traversal vulnerability in Mailman 2.1.39",
+    "description": "Directory traversal vulnerability in /mailman/private/mailman endpoint allows unauthenticated attackers to read arbitrary files.",
+    "affected_versions": ["2.1.39"],
+    "cvss": "7.5",
+    "published_date": "2025-04-20",
+    "test": {
+      "method": "GET",
+      "path": "/mailman/private/mailman",
+      "evidence_regex": "root:x:0:0:"
+    }
+  },
+  {
+    "id": "CVE-2025-43920",
+    "title": "Command injection vulnerability in Mailman 2.1.39",
+    "description": "Improper sanitization of email Subject line in Mailman 2.1.39 (cPanel/WHM bundle) allows command injection.",
+    "affected_versions": ["2.1.39"],
+    "cvss": "7.8",
+    "published_date": "2025-04-20",
+    "test": {
+      "method": "POST",
+      "path": "/mailman/admin",
+      "data": {
+        "Subject": "test; uname -a"
+      },
+      "evidence_regex": "Linux"
+    }
+  },
+  {
+    "id": "CVE-2025-43921",
+    "title": "Authentication bypass in Mailman 2.1.39",
+    "description": "Authentication bypass vulnerability allowing unauthenticated users to create mailing lists.",
+    "affected_versions": ["2.1.39"],
+    "cvss": "5.3",
+    "published_date": "2025-04-20",
+    "test": {
+      "method": "POST",
+      "path": "/mailman/admin/create_list",
+      "data": {
+        "list_name": "testlist"
+      },
+      "expected_status": 200,
+      "evidence": "List created successfully"
+    }
+  },
+  {
+    "id": "CVE-2018-13796",
+    "title": "Arbitrary text injection vulnerability",
+    "description": "Multiple CGI scripts in Mailman 2.x allow injection of arbitrary text into mailing list pages.",
+    "affected_versions": [">=2.1.26", "<=2.1.28"],
+    "cvss": "6.4",
+    "published_date": "2018-10-05",
+    "test": {
+      "method": "POST",
+      "path": "/mailman/admin/edit_list",
+      "data": {
+        "subject": "<script>alert(1)</script>"
+      },
+      "evidence_regex": "<script>alert\\(1\\)</script>"
+    }
+  },
+  {
+    "id": "CVE-2020-12108",
+    "title": "Arbitrary content injection via options login page",
+    "description": "Arbitrary content injection possible through options login page in Mailman versions 2.1.26 to 2.1.28.",
+    "affected_versions": [">=2.1.26", "<=2.1.28"],
+    "cvss": "6.5",
+    "published_date": "2020-04-20",
+    "test": {
+      "method": "GET",
+      "path": "/mailman/options",
+      "evidence_regex": "Arbitrary content found"
+    }
+  },
+  {
+    "id": "CVE-2020-15011",
+    "title": "Arbitrary content injection via private archive login page",
+    "description": "Arbitrary content injection via private archive login page in Mailman versions 2.1.26 to 2.1.28.",
+    "affected_versions": [">=2.1.26", "<=2.1.28"],
+    "cvss": "6.5",
+    "published_date": "2020-05-10",
+    "test": {
+      "method": "GET",
+      "path": "/mailman/private",
+      "evidence_regex": "Arbitrary content found"
+    }
+  }
+]

@@ -1,51 +1,10 @@
+from json import load
 from requests import Session, Timeout, ConnectionError, RequestException, TooManyRedirects, HTTPError
 from urllib.parse import urljoin, urlparse
 from time import sleep
 from re import search
 from random import choice
 
-# Common paths where Mailman installations might be exposed
-MAILMAN_PATHS = [
-    "/mailman/admin",
-    "/mailman/admin/info",
-    "/mailman/admin/config",
-    "/mailman/admin/listinfo",
-    "/mailman",
-    "/mailman3",
-    "/mailman3/admin",
-    "/mailman3/api/",
-    "/mailman3/postorius",
-    "/mailman3/hyperkitty",
-    "/mailman3/static",
-    "/mailman3/templates",
-    "/cgi-bin/mailman/admin",
-    "/cgi-bin/mailman3/admin",
-    "/pipermail/",
-    "/mailman/listinfo",
-    "/cgi-bin/mailman/listinfo",
-    "/mailman/private",
-    "/mailman/archives/public",
-    "/mailman/archives/private",
-    "/mailman/cron",
-    "/mailman/mailman.cfg",
-    "/mailman/config.py",
-    "/mailman/secretkey",
-    "/mailman/data",
-    "/mailman/db",
-    "/mailman/logs",
-    "/mailman/log/mailman.log",
-    "/mailman/tmp",
-    "/mailman/static",
-    "/mailman/templates",
-    "/cgi-bin/mailman/admindb",
-    "/cgi-bin/mailman/member",
-    "/cgi-bin/mailman/subscribe",
-    "/cgi-bin/mailman/unsubscribe",
-    "/cgi-bin/mailman/approve",
-    "/cgi-bin/mailman/deny",
-]
-
-# Random User-Agent pool to avoid being blocked
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/102.0",
@@ -53,46 +12,60 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0",
 ]
 
-# Delay between requests to avoid detection or rate limiting
 REQUEST_DELAY = 1
 
-
 def is_valid_url(url: str) -> bool:
-    """Validate the URL format (must include scheme and netloc)."""
     parsed = urlparse(url)
     return all([parsed.scheme in ("http", "https"), parsed.netloc])
 
+def load_common_paths(filepath: str, version: str = "v2") -> list:
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = load(f)
+        if version == "v2":
+            return data.get("v2_paths", [])
+        elif version == "v3":
+            return data.get("v3_paths", [])
+        else:
+            print(f"[!] Unknown version '{version}', defaulting to 'v2'")
+            return data.get("v2_paths", [])
+    except (FileNotFoundError, OSError) as e:
+        print(f"[!] Error loading common paths file: {e}")
+        return []
+    except Exception as e:
+        print(f"[!] Unexpected error loading common paths file: {e}")
+        return []
 
-def check_paths(base_url: str, timeout: int = 5):
-    """Check accessibility of important Mailman paths on the target."""
+def check_paths(base_url: str, paths: list, timeout: int = 5) -> list:
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
-        return {"error": "Invalid URL format. Must include scheme (http or https) and domain."}
+        return [{"error": "Invalid URL format. Must include scheme (http or https) and domain."}]
 
     session = Session()
     session.headers.update({"User-Agent": choice(USER_AGENTS)})
 
     accessible_paths = []
 
-    for path in MAILMAN_PATHS:
+    for item in paths:
+        path = item.get("path")
+        if not path:
+            continue
+
         full_url = urljoin(base_url + "/", path.lstrip("/"))
         try:
             response = session.get(full_url, timeout=timeout, verify=False)
-
             if response.ok:
-                # Look for keywords that indicate a Mailman page
                 if search(r"(mailman|gnu|listinfo|hyperkitty|postorius|mailing list|admin)", response.text, flags=2):
                     accessible_paths.append({
                         "path": path,
-                        "status_code": response.status_code
+                        "status_code": response.status_code,
+                        "description": item.get("description", ""),
+                        "access_level": item.get("access_level", "unknown")
                     })
-
         except (Timeout, ConnectionError) as e:
             print(f"[!] Connection error at {full_url}: {e}")
-
         except (TooManyRedirects, HTTPError, RequestException) as e:
             print(f"[!] Request failed at {full_url}: {e}")
-
         except Exception as e:
             print(f"[!] Unexpected error at {full_url}: {e}")
 
@@ -100,15 +73,23 @@ def check_paths(base_url: str, timeout: int = 5):
 
     return accessible_paths
 
-
 if __name__ == "__main__":
     target = input("Enter target base URL (e.g., https://example.com): ").strip()
-    results = check_paths(target)
-    if isinstance(results, dict) and "error" in results:
-        print("Error:", results["error"])
+    version = input("Enter Mailman version to scan (v2 or v3): ").strip().lower()
+    if version not in ["v2", "v3"]:
+        print("[!] Invalid version specified. Defaulting to v2.")
+        version = "v2"
+    paths = load_common_paths("data/common_paths.json", version)
+    if not paths:
+        print("[!] No paths loaded. Exiting.")
+        exit(1)
+
+    results = check_paths(target, paths)
+    if results and isinstance(results[0], dict) and "error" in results[0]:
+        print("Error:", results[0]["error"])
     elif results:
         print("\nAccessible Mailman paths:")
         for item in results:
-            print(f"{item['path']} - HTTP {item['status_code']}")
+            print(f"{item['path']} - HTTP {item['status_code']} - {item['description']} - Access level: {item['access_level']}")
     else:
         print("No accessible Mailman paths found.")

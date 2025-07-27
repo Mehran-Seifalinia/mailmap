@@ -1,0 +1,321 @@
+{
+  "v2_paths": [
+    {
+      "path": "/cgi-bin/mailman/",
+      "description": "CGI root directory for Mailman 2.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/cgi-bin/mailman/admin",
+      "description": "Admin web interface for managing mailing lists in Mailman 2.x",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/cgi-bin/mailman/listinfo",
+      "description": "Page showing mailing list info and subscription options in Mailman 2.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/cgi-bin/mailman/owner",
+      "description": "Mailing list owner interface in Mailman 2.x",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/cgi-bin/mailman/private",
+      "description": "Private scripts and files, should be restricted",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/cgi-bin/mailman/admindb",
+      "description": "Admin database interface for managing subscriptions in Mailman 2.x",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/cgi-bin/mailman/subscribe",
+      "description": "Subscribe page for mailing lists in Mailman 2.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/cgi-bin/mailman/unsubscribe",
+      "description": "Unsubscribe page for mailing lists in Mailman 2.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/cgi-bin/mailman/approve",
+      "description": "Approve subscription requests (Mailman 2.x)",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/cgi-bin/mailman/deny",
+      "description": "Deny subscription requests (Mailman 2.x)",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/cgi-bin/mailman/confirm",
+      "description": "Confirm subscription/unsubscription actions (Mailman 2.x)",
+      "access_level": "public"
+    },
+    {
+      "path": "/cgi-bin/mailman/options",
+      "description": "Options page for managing subscription settings (Mailman 2.x)",
+      "access_level": "public"
+    },
+    {
+      "path": "/cgi-bin/mailman/roster",
+      "description": "List of mailing list members (Mailman 2.x)",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/admin",
+      "description": "Admin web interface (alternate path)",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/mailman/admin/info",
+      "description": "Admin info page",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/mailman/admin/config",
+      "description": "Admin configuration page",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/mailman/admin/listinfo",
+      "description": "Admin list info page",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/mailman/listinfo",
+      "description": "Public mailing list info page",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/confirm",
+      "description": "Confirm actions page",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/options",
+      "description": "Options page for subscription management",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/roster",
+      "description": "Mailing list members page",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/private/",
+      "description": "Private directory containing sensitive Mailman files",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/archives/",
+      "description": "Public mailing list archives",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/archives/private/",
+      "description": "Private archives, may contain sensitive info",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/archives/",
+      "description": "General archive directory (sometimes used)",
+      "access_level": "public"
+    },
+    {
+      "path": "/archives/public/",
+      "description": "Public archives",
+      "access_level": "public"
+    },
+    {
+      "path": "/archives/private/",
+      "description": "Private archives",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/pipermail/",
+      "description": "Archive directory for old mailing list emails (Mailman 2.x)",
+      "access_level": "public"
+    },
+    {
+      "path": "/lists/",
+      "description": "Alternative path for lists",
+      "access_level": "public"
+    },
+    {
+      "path": "/listinfo",
+      "description": "Alternative list info path",
+      "access_level": "public"
+    },
+    {
+      "path": "/admin",
+      "description": "General admin path (sometimes used)",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/mailman",
+      "description": "Root directory for Mailman",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman3",
+      "description": "Root directory for Mailman 3.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/mm3",
+      "description": "Alternate path for Mailman 3.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/config.py",
+      "description": "Main configuration file of Mailman 2.x",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/Mailman/mm_cfg.py",
+      "description": "Additional configuration file for Mailman 2.x",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/data/",
+      "description": "Mailman data directory holding lists and archives",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/db",
+      "description": "Database directory (if present)",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/bin/",
+      "description": "Executable scripts and binaries",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/scripts/",
+      "description": "Scripts used for Mailman operations",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/templates/",
+      "description": "HTML templates for Mailman pages",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/cron/",
+      "description": "Cron jobs and scheduled tasks scripts",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/icons/",
+      "description": "Icons and images used in Mailman web pages",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/robots.txt",
+      "description": "Robots exclusion file for web crawlers",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/logs",
+      "description": "Log files directory",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/log/mailman.log",
+      "description": "Main Mailman log file",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/tmp",
+      "description": "Temporary files directory",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/secretkey",
+      "description": "Secret key file, very sensitive",
+      "access_level": "sensitive"
+    }
+  ],
+  "v3_paths": [
+    {
+      "path": "/mailman/",
+      "description": "Root directory of Mailman 3.x web interface",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/admin/",
+      "description": "Admin dashboard for Mailman 3.x",
+      "access_level": "admin_only"
+    },
+    {
+      "path": "/mailman/static/",
+      "description": "Static assets like CSS, JS, images for Mailman 3.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/api/",
+      "description": "REST API endpoint for Mailman 3.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/postorius/",
+      "description": "Web interface for Mailman 3.x (Postorius)",
+      "access_level": "public"
+    },
+    {
+      "path": "/hyperkitty/",
+      "description": "Mailman 3.x archive interface (HyperKitty)",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/mailman/web/static/",
+      "description": "Static web assets in Mailman 3.x structure",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/mailman/commands/",
+      "description": "Command-line scripts for Mailman 3.x",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/mailman/",
+      "description": "Core Mailman 3.x application directory",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/mailman/templates/",
+      "description": "Templates for Mailman 3.x web interface",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/mailman/cron/",
+      "description": "Cron scripts or scheduled tasks for Mailman 3.x",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/mailman/robots.txt",
+      "description": "Robots.txt file for Mailman 3.x",
+      "access_level": "public"
+    },
+    {
+      "path": "/mailman/mailman/logs/",
+      "description": "Log files directory, sensitive",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/mailman/data/",
+      "description": "Data directory inside mailman app",
+      "access_level": "sensitive"
+    },
+    {
+      "path": "/mailman/mailman/tests/",
+      "description": "Test files, usually not public",
+      "access_level": "sensitive"
+    }
+  ]
+}

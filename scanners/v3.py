@@ -11,8 +11,12 @@ class MailmanV3Scanner:
         self.fingerprints = self._load_json(fingerprints_path)
 
     def _load_json(self, filepath):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return load(f)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return load(f)
+        except Exception as e:
+            print(f"[!] Error loading fingerprints file '{filepath}': {e}")
+            return []
 
     def _get_header_value(self, headers, header_name):
         """
@@ -36,25 +40,28 @@ class MailmanV3Scanner:
         url_path = response.get('url_path', '')
 
         for fp in self.fingerprints:
-            if fp.get('version', '').startswith('Mailman 3'):
-                method = fp.get('method')
-                location = fp.get('location')
-                pattern = fp.get('pattern')
-                version = fp.get('version')
+            # Only process fingerprints tagged for Mailman 3
+            if not fp.get('version', '').startswith('Mailman 3'):
+                continue
 
-                if method == 'header' and location.startswith('headers.'):
-                    header_name = location[len('headers.'):]
-                    val = self._get_header_value(headers, header_name)
-                    if val and search(pattern, val):
-                        return version
+            method = fp.get('method')
+            location = fp.get('location')
+            pattern = fp.get('pattern')
+            version = fp.get('version')
 
-                elif method == 'body':
-                    if search(pattern, body):
-                        return version
+            if method == 'header' and location.startswith('headers.'):
+                header_name = location[len('headers.'):]
+                val = self._get_header_value(headers, header_name)
+                if val and search(pattern, val):
+                    return version
 
-                elif method == 'url':
-                    if location in url_path:
-                        return version
+            elif method == 'body':
+                if search(pattern, body):
+                    return version
+
+            elif method == 'url':
+                if location in url_path:
+                    return version
 
         return None
 

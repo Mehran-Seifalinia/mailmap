@@ -2,13 +2,14 @@ from re import compile, escape, IGNORECASE
 from requests import Session, Timeout, ConnectionError, RequestException
 from urllib.parse import urljoin, urlparse
 from json import load, JSONDecodeError
-from logging import getLogger, basicConfig, INFO, error
+from logging import getLogger, basicConfig, INFO
 from typing import List
 
 # Setup logger
 logger = getLogger(__name__)
 if not logger.hasHandlers():
     basicConfig(level=INFO, format='[%(levelname)s] %(message)s')
+
 
 def load_json_file(filepath: str):
     """Load JSON data from a file."""
@@ -23,13 +24,18 @@ def load_json_file(filepath: str):
         logger.error(f"Failed to load JSON file {filepath}: {e}")
     return None
 
+
 def is_valid_url(url: str) -> bool:
     """Validate URL scheme and netloc."""
     parsed = urlparse(url)
     return all([parsed.scheme in ("http", "https"), parsed.netloc])
 
+
 def detect_mailman(base_url: str, common_paths: List[str], fingerprints: List[str], timeout: int = 5) -> dict:
-    """Detect Mailman installation on target base URL using given paths and fingerprints."""
+    """
+    Detect Mailman installation on the target base URL using known paths and content fingerprints.
+    Returns a dict with detection results and details.
+    """
     base_url = base_url.rstrip("/")
 
     if not is_valid_url(base_url):
@@ -41,7 +47,7 @@ def detect_mailman(base_url: str, common_paths: List[str], fingerprints: List[st
     session = Session()
     session.headers.update({"User-Agent": "MailmapScanner/1.0"})
 
-    # Compile fingerprints regex once for performance
+    # Precompile fingerprint regex
     combined_fingerprint_regex = compile("|".join(map(escape, fingerprints)), flags=IGNORECASE)
 
     for path in common_paths:
@@ -52,10 +58,7 @@ def detect_mailman(base_url: str, common_paths: List[str], fingerprints: List[st
             if not response.ok:
                 continue
 
-            response.raise_for_status()
-
-            content = response.text[:100_000]  # Limit content size to 100KB
-
+            content = response.text[:100_000]  # Limit content size for performance
             match = combined_fingerprint_regex.search(content)
             if match:
                 return {
@@ -73,17 +76,40 @@ def detect_mailman(base_url: str, common_paths: List[str], fingerprints: List[st
         "reason": "No known Mailman path responded with recognizable content."
     }
 
-if __name__ == "__main__":
-    import sys
 
-    # Load data files
-    common_paths = load_json_file("data/common_paths.json")
+def check_mailman(base_url: str, settings: dict) -> tuple[bool, dict]:
+    """
+    High-level interface for Mailman detection.
+    Loads path/fingerprint data and calls detect_mailman().
+    Returns (found: bool, result: dict)
+    """
+    paths_file = settings.get("paths", "data/common_paths.json")
+    common_paths = load_json_file(paths_file)
     fingerprints = load_json_file("data/fingerprints.json")
 
     if common_paths is None or fingerprints is None:
-        logger.error("Failed to load required data files. Exiting.")
-        sys.exit(1)
+        return False, {"error": "Failed to load required data files."}
+
+    result = detect_mailman(
+        base_url,
+        common_paths,
+        fingerprints,
+        timeout=settings.get("timeout", 5)
+    )
+
+    return result.get("found", False), result
+
+
+# Optional standalone mode for testing this module directly
+if __name__ == "__main__":
+    import sys
 
     target = input("Enter target base URL (e.g., https://example.com): ").strip()
-    result = detect_mailman(target, common_paths, fingerprints)
+    settings = {
+        "timeout": 5,
+        "paths": "data/common_paths.json"
+    }
+
+    found, result = check_mailman(target, settings)
+    print("[+] Mailman Detected" if found else "[!] Mailman Not Found")
     print(result)

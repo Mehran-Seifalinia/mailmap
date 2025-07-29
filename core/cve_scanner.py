@@ -1,10 +1,10 @@
-from logging import getLogger, warning
-from typing import List, Dict, Optional
+from logging import getLogger
+from typing import List, Dict, Optional, Tuple
 from packaging.version import Version, InvalidVersion
 from packaging.specifiers import SpecifierSet
 from requests import Session, Response
 
-from core.utils import create_session, send_get_request, read_json_file, log_error, log_info
+from core.utils import create_session, send_get_request, send_post_request, read_json_file, log_error
 
 logger = getLogger(__name__)
 
@@ -22,10 +22,32 @@ class CVEScanner:
             return []
         return data
 
+    def perform_test(self, method: str, url: str) -> Tuple[Optional[bool], str]:
+        """Performs an HTTP-based vulnerability test based on method and URL."""
+        try:
+            method = method.upper()
+            if method == "GET":
+                response: Optional[Response] = send_get_request(self.session, url)
+            elif method == "POST":
+                response: Optional[Response] = send_post_request(self.session, url)
+            else:
+                return None, f"Unsupported HTTP method: {method}"
+
+            if not response:
+                return False, "No response or request failed"
+
+            if response.status_code == 200:
+                return True, "Expected response received"
+            else:
+                return False, f"Unexpected status code: {response.status_code}"
+
+        except Exception as e:
+            log_error(f"Exception during test request to {url}: {e}")
+            return False, f"Exception during test: {e}"
+
     def scan(self, detected_version: Optional[str] = None) -> List[Dict]:
         """
         Scan loaded CVEs against the detected Mailman version.
-        If detected_version is None, it skips version filtering and attempts all tests.
         Returns a list of CVE scan results with test outcomes.
         """
         results = []
@@ -33,17 +55,23 @@ class CVEScanner:
         for cve in self.cves:
             cve_id = cve.get("id", "UNKNOWN")
             description = cve.get("description", "")
-            cvss = cve.get("cvss", "N/A")
-            affected_versions = cve.get("version_affected", "")
+            cvss_raw = cve.get("cvss", "0.0")
             test_info = cve.get("test", {})
+            affected_versions = cve.get("version_affected", "").strip()
 
-            # Check version compatibility if version is given
+            # Parse CVSS score safely
+            try:
+                cvss = float(cvss_raw)
+            except (ValueError, TypeError):
+                cvss = 0.0
+                logger.warning(f"Invalid CVSS format in CVE {cve_id}: {cvss_raw}")
+
+            # Version filtering
             if detected_version and affected_versions:
                 try:
-                    spec_set = SpecifierSet(affected_versions)
                     ver = Version(detected_version)
+                    spec_set = SpecifierSet(affected_versions)
                     if ver not in spec_set:
-                        # Version not affected
                         results.append({
                             "id": cve_id,
                             "description": description,
@@ -53,7 +81,7 @@ class CVEScanner:
                         })
                         continue
                 except InvalidVersion:
-                    warning(f"Invalid version format '{detected_version}' for CVE {cve_id}")
+                    logger.warning(f"Invalid version format '{detected_version}' for CVE {cve_id}")
                     results.append({
                         "id": cve_id,
                         "description": description,
@@ -62,57 +90,30 @@ class CVEScanner:
                         "reason": "Invalid detected version format",
                     })
                     continue
+            elif detected_version and not affected_versions:
+                logger.debug(f"No affected version info provided for CVE {cve_id}, test will proceed anyway.")
 
-            # Perform the vulnerability test if test info is present
+            # Perform test if test info is present
             method = test_info.get("method", "GET").upper()
             url = test_info.get("url")
 
-            if method == "GET" and url:
-                try:
-                    response: Optional[Response] = send_get_request(self.session, url)
-                    if response:
-                        status_code = response.status_code
-                        if status_code == 200:
-                            results.append({
-                                "id": cve_id,
-                                "description": description,
-                                "cvss": cvss,
-                                "test_passed": True,
-                                "reason": "Expected response received",
-                            })
-                        else:
-                            results.append({
-                                "id": cve_id,
-                                "description": description,
-                                "cvss": cvss,
-                                "test_passed": False,
-                                "reason": f"Unexpected status code: {status_code}",
-                            })
-                    else:
-                        results.append({
-                            "id": cve_id,
-                            "description": description,
-                            "cvss": cvss,
-                            "test_passed": False,
-                            "reason": "No response or request failed",
-                        })
-                except Exception as e:
-                    log_error(f"Error performing GET request for CVE {cve_id}: {e}")
-                    results.append({
-                        "id": cve_id,
-                        "description": description,
-                        "cvss": cvss,
-                        "test_passed": False,
-                        "reason": f"Exception during test: {e}",
-                    })
+            if url:
+                test_passed, reason = self.perform_test(method, url)
+                results.append({
+                    "id": cve_id,
+                    "description": description,
+                    "cvss": cvss,
+                    "test_passed": test_passed,
+                    "reason": reason,
+                })
             else:
-                # If no test or unsupported method, just report CVE info without test
+                logger.info(f"No URL provided for test in CVE {cve_id}")
                 results.append({
                     "id": cve_id,
                     "description": description,
                     "cvss": cvss,
                     "test_passed": None,
-                    "reason": "No test or unsupported test method",
+                    "reason": "No test URL or test data provided",
                 })
 
         return results

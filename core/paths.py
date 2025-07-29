@@ -2,8 +2,14 @@ from json import load
 from requests import Session, Timeout, ConnectionError, RequestException, TooManyRedirects, HTTPError
 from urllib.parse import urljoin, urlparse
 from time import sleep
-from re import search
 from random import choice
+from typing import List, Dict
+from urllib3 import disable_warnings, exceptions as urllib3_exceptions
+from re import compile as re_compile
+from sys import exit as sys_exit
+
+# Disable SSL warnings (since verify=False is used)
+disable_warnings(urllib3_exceptions.InsecureRequestWarning)
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -12,13 +18,19 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0",
 ]
 
-REQUEST_DELAY = 1
+REQUEST_DELAY = 1  # Delay between requests
+
+# Precompiled pattern for detecting Mailman-related content
+MAILMAN_PATTERN = re_compile(
+    r"(mailman|gnu|listinfo|hyperkitty|postorius|mailing list|admin)",
+    flags=2  # re.IGNORECASE
+)
 
 def is_valid_url(url: str) -> bool:
     parsed = urlparse(url)
-    return all([parsed.scheme in ("http", "https"), parsed.netloc])
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
-def load_common_paths(filepath: str, version: str = "v2") -> list:
+def load_common_paths(filepath: str, version: str = "v2") -> List[Dict]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = load(f)
@@ -36,7 +48,7 @@ def load_common_paths(filepath: str, version: str = "v2") -> list:
         print(f"[!] Unexpected error loading common paths file: {e}")
         return []
 
-def check_paths(base_url: str, paths: list, timeout: int = 5) -> list:
+def check_paths(base_url: str, paths: List[Dict], timeout: int = 5) -> List[Dict]:
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
         return [{"error": "Invalid URL format. Must include scheme (http or https) and domain."}]
@@ -52,16 +64,16 @@ def check_paths(base_url: str, paths: list, timeout: int = 5) -> list:
             continue
 
         full_url = urljoin(base_url + "/", path.lstrip("/"))
+
         try:
             response = session.get(full_url, timeout=timeout, verify=False)
-            if response.ok:
-                if search(r"(mailman|gnu|listinfo|hyperkitty|postorius|mailing list|admin)", response.text, flags=2):
-                    accessible_paths.append({
-                        "path": path,
-                        "status_code": response.status_code,
-                        "description": item.get("description", ""),
-                        "access_level": item.get("access_level", "unknown")
-                    })
+            if response.status_code == 200 and MAILMAN_PATTERN.search(response.text):
+                accessible_paths.append({
+                    "path": path,
+                    "status_code": response.status_code,
+                    "description": item.get("description", ""),
+                    "access_level": item.get("access_level", "unknown")
+                })
         except (Timeout, ConnectionError) as e:
             print(f"[!] Connection error at {full_url}: {e}")
         except (TooManyRedirects, HTTPError, RequestException) as e:
@@ -73,16 +85,19 @@ def check_paths(base_url: str, paths: list, timeout: int = 5) -> list:
 
     return accessible_paths
 
+# Test block for standalone execution
 if __name__ == "__main__":
     target = input("Enter target base URL (e.g., https://example.com): ").strip()
     version = input("Enter Mailman version to scan (v2 or v3): ").strip().lower()
+
     if version not in ["v2", "v3"]:
         print("[!] Invalid version specified. Defaulting to v2.")
         version = "v2"
+
     paths = load_common_paths("data/common_paths.json", version)
     if not paths:
         print("[!] No paths loaded. Exiting.")
-        exit(1)
+        sys_exit(1)
 
     results = check_paths(target, paths)
     if results and isinstance(results[0], dict) and "error" in results[0]:

@@ -11,8 +11,12 @@ class MailmanV2Scanner:
         self.fingerprints = self._load_json(fingerprints_path)
 
     def _load_json(self, filepath):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return load(f)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return load(f)
+        except Exception as e:
+            print(f"[!] Error loading fingerprints file '{filepath}': {e}")
+            return []
 
     def _get_header_value(self, headers, header_name):
         """

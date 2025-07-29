@@ -5,6 +5,7 @@ from traceback import print_exc
 from core import detector, version, paths, cve_scanner
 from output import report_generator
 
+
 def main():
     parser = ArgumentParser(description="Mailman Security Scanner CLI")
     parser.add_argument('--target', required=True, help="Target URL for scanning")
@@ -16,7 +17,7 @@ def main():
     parser.add_argument('--output', help="Output file path")
     parser.add_argument('--format', choices=['json', 'html', 'md'], default='json', help="Output format")
     parser.add_argument('--verbose', action='store_true', help="Enable verbose logging")
-    parser.add_argument('--scan-part', choices=['detector','version','paths','cve','full'], default='full', help="Select scan part")
+    parser.add_argument('--scan-part', choices=['detector', 'version', 'paths', 'cve', 'full'], default='full', help="Select scan part")
     parser.add_argument('--max-retries', type=int, default=3, help="Max retries for HTTP requests")
     parser.add_argument('--version', action='version', version='Mailmap Scanner 1.0')
 
@@ -30,8 +31,15 @@ def main():
             'timeout': args.timeout,
             'delay': args.delay,
             'max_retries': args.max_retries,
-            'verbose': args.verbose
+            'verbose': args.verbose,
+            'paths': args.paths
         }
+
+        mailman_exists = False
+        details = {}
+        version_info = {}
+        path_results = []
+        cve_results = []
 
         # Step 1: Detect Mailman installation
         if args.scan_part in ['detector', 'full']:
@@ -44,7 +52,12 @@ def main():
         # Step 2: Extract Mailman version
         if args.scan_part in ['version', 'full']:
             version_info = version.get_version(args.target, settings)
-            print(f"[+] Mailman version: {version_info}")
+            if 'conflict' in version_info:
+                print(f"[!] Multiple versions found: {version_info['versions']}")
+            elif version_info.get('version'):
+                print(f"[+] Mailman version: {version_info['version']}")
+            else:
+                print("[!] No Mailman version detected.")
 
         # Step 3: Scan important paths and sensitive files
         if args.scan_part in ['paths', 'full']:
@@ -54,7 +67,9 @@ def main():
 
         # Step 4: Check for CVEs
         if args.scan_part in ['cve', 'full']:
-            cve_results = cve_scanner.scan_cves(version_info, settings)
+            # Pass version string or None to CVE scanner
+            version_str = version_info.get('version') if isinstance(version_info, dict) else None
+            cve_results = cve_scanner.scan_cves(version_str, settings)
             for cve in cve_results:
                 print(f"[!] CVE found: {cve['id']} - {cve['description']} - Severity: {cve['severity']}")
 
@@ -73,6 +88,7 @@ def main():
         if args.verbose:
             print_exc()
         exit(1)
+
 
 if __name__ == "__main__":
     main()

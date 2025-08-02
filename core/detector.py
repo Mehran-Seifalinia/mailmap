@@ -5,14 +5,12 @@ from json import load, JSONDecodeError
 from logging import getLogger, basicConfig, INFO
 from typing import List, Dict, Optional, Tuple
 
-# Setup logger
 logger = getLogger(__name__)
 if not logger.hasHandlers():
     basicConfig(level=INFO, format='[%(levelname)s] %(message)s')
 
 
 def load_json_file(filepath: str) -> Optional[Dict]:
-    """Load JSON data from a file."""
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             return load(f)
@@ -26,7 +24,6 @@ def load_json_file(filepath: str) -> Optional[Dict]:
 
 
 def is_valid_url(url: str) -> bool:
-    """Validate URL scheme and netloc."""
     parsed = urlparse(url)
     return all([parsed.scheme in ("http", "https"), parsed.netloc])
 
@@ -35,13 +32,9 @@ def detect_mailman(
     base_url: str,
     common_paths: List[str],
     fingerprints: List[Dict],
-    timeout: int = 5
+    timeout: int = 5,
+    verbose: bool = False
 ) -> Dict:
-    """
-    Detect Mailman installation on the target base URL using known paths and content fingerprints.
-    Checks headers, body content and URL paths based on fingerprint method.
-    Returns a dict with detection results and details.
-    """
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
         return {
@@ -54,15 +47,17 @@ def detect_mailman(
 
     for path in common_paths:
         full_url = urljoin(base_url + "/", path.lstrip("/"))
-        logger.info(f"Trying path: {full_url}")  # DEBUG
+        if verbose:
+            logger.info(f"Trying path: {full_url}")
         try:
             response = session.get(full_url, timeout=timeout)
-            logger.info(f"Status code for {full_url}: {response.status_code}")  # DEBUG
+            if verbose:
+                logger.info(f"Status code for {full_url}: {response.status_code}")
             if not response.ok:
                 continue
 
             headers = response.headers
-            body = response.text[:100_000]  # limit content size for performance
+            body = response.text[:100_000]
 
             for fp in fingerprints:
                 method = fp.get("method", "").lower()
@@ -70,11 +65,11 @@ def detect_mailman(
                 pattern = fp.get("pattern", "")
                 version = fp.get("version", "Unknown")
 
-                # Handle empty pattern for 'url' method as simple substring check
                 if method == "url":
                     if not pattern:
                         if location and location in full_url:
-                            logger.info(f"URL fingerprint matched: {location} at {full_url}")
+                            if verbose:
+                                logger.info(f"URL fingerprint matched: {location} at {full_url}")
                             return {
                                 "found": True,
                                 "url": full_url,
@@ -85,7 +80,8 @@ def detect_mailman(
                     else:
                         regex = compile(pattern, flags=IGNORECASE)
                         if regex.search(full_url):
-                            logger.info(f"URL regex fingerprint matched: {pattern} at {full_url}")
+                            if verbose:
+                                logger.info(f"URL regex fingerprint matched: {pattern} at {full_url}")
                             return {
                                 "found": True,
                                 "url": full_url,
@@ -96,17 +92,16 @@ def detect_mailman(
                     continue
 
                 if not pattern:
-                    # no pattern to check for header or body
                     continue
 
                 regex = compile(pattern, flags=IGNORECASE)
 
                 if method == "header":
-                    # location example: headers.X-Mailman-Version
                     header_key = location.split(".", 1)[1] if location.startswith("headers.") else location
                     header_value = headers.get(header_key, "")
                     if header_value and regex.search(header_value):
-                        logger.info(f"Header fingerprint matched: {header_key} = {header_value} at {full_url}")
+                        if verbose:
+                            logger.info(f"Header fingerprint matched: {header_key} = {header_value} at {full_url}")
                         return {
                             "found": True,
                             "url": full_url,
@@ -117,7 +112,8 @@ def detect_mailman(
 
                 elif method == "body":
                     if regex.search(body):
-                        logger.info(f"Body fingerprint matched pattern: {pattern} at {full_url}")
+                        if verbose:
+                            logger.info(f"Body fingerprint matched pattern: {pattern} at {full_url}")
                         return {
                             "found": True,
                             "url": full_url,
@@ -127,7 +123,8 @@ def detect_mailman(
                         }
 
         except (Timeout, ConnectionError, RequestException) as e:
-            logger.warning(f"Request error for {full_url}: {e}")
+            if verbose:
+                logger.warning(f"Request error for {full_url}: {e}")
             continue
 
     return {
@@ -137,11 +134,6 @@ def detect_mailman(
 
 
 def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
-    """
-    High-level interface for Mailman detection.
-    Loads path/fingerprint data and calls detect_mailman().
-    Returns (found: bool, result: dict)
-    """
     paths_file = settings.get("paths", "data/common_paths.json")
     common_paths_data = load_json_file(paths_file)
     fingerprints = load_json_file(settings.get("fingerprints", "data/fingerprints.json"))
@@ -157,13 +149,13 @@ def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
         base_url,
         common_paths,
         fingerprints,
-        timeout=settings.get("timeout", 5)
+        timeout=settings.get("timeout", 5),
+        verbose=settings.get("verbose", False)
     )
 
     return result.get("found", False), result
 
 
-# Optional standalone mode for testing this module directly
 if __name__ == "__main__":
     target = input("Enter target base URL (e.g., https://example.com): ").strip()
     settings = {

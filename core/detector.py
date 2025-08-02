@@ -1,14 +1,24 @@
-from re import compile as re_compile, IGNORECASE, Pattern
-from urllib.parse import urljoin, urlparse
+from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError
 from json import load, JSONDecodeError
-from logging import getLogger, basicConfig, INFO, WARNING
+from logging import getLogger, INFO
+from re import compile as re_compile, IGNORECASE, Pattern
 from typing import List, Dict, Optional, Tuple
-from aiohttp import ClientSession
-from asyncio import run, wait, create_task, FIRST_COMPLETED, CancelledError
+from urllib.parse import urljoin, urlparse
 
+from aiohttp import ClientSession
+from rich.console import Console
+from rich.logging import RichHandler
+from logging import basicConfig
+
+console = Console()
 logger = getLogger(__name__)
 if not logger.hasHandlers():
-    basicConfig(level=INFO, format='[%(levelname)s] %(message)s')
+    basicConfig(
+        level=INFO,
+        format="%(message)s",
+        handlers=[RichHandler(console=console)]
+    )
+
 
 def load_json_file(filepath: str) -> Optional[Dict]:
     try:
@@ -18,9 +28,11 @@ def load_json_file(filepath: str) -> Optional[Dict]:
         logger.error(f"Failed to load JSON file {filepath}: {e}")
     return None
 
+
 def is_valid_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
 
 def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[Pattern]]]:
     compiled = []
@@ -29,6 +41,7 @@ def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[
         compiled_pattern = re_compile(pattern, IGNORECASE) if pattern else None
         compiled.append((fp, compiled_pattern))
     return compiled
+
 
 def match_fingerprint(
     response_text: str,
@@ -71,7 +84,6 @@ def match_fingerprint(
                 "evidence": f"Header {header_key}: {header_value}"
             }
     elif method == "body" and compiled_pattern:
-        # فقط وقتی status_ok باشه به محتوا نگاه می‌کنیم
         if is_status_ok and compiled_pattern.search(response_text[:100_000]):
             if verbose:
                 logger.info(f"Body matched at {url}")
@@ -84,6 +96,7 @@ def match_fingerprint(
             }
 
     return None
+
 
 async def fetch_and_check(
     session: ClientSession,
@@ -116,6 +129,7 @@ async def fetch_and_check(
             logger.warning(f"Error fetching {url}: {e}")
     return None
 
+
 async def detect_mailman_async(
     base_url: str,
     paths: List[str],
@@ -140,11 +154,13 @@ async def detect_mailman_async(
                 if result:
                     for p in pending:
                         p.cancel()
+                    await gather(*pending, return_exceptions=True)
                     return result
 
             tasks = list(pending)
 
     return {"found": False, "reason": "No known Mailman path responded with recognizable content."}
+
 
 def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
     paths_file = settings.get("paths", "data/common_paths.json")
@@ -170,10 +186,11 @@ def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
 
     return result.get("found", False), result
 
-if __name__ == "__main__":
-    import argparse
 
-    parser = argparse.ArgumentParser(description="Mailmap - Mailman Detection Tool")
+if __name__ == "__main__":
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser(description="Mailmap - Mailman Detection Tool")
     parser.add_argument("--target", required=True, help="Target base URL, e.g. https://example.com")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--timeout", type=int, default=5, help="Timeout for HTTP requests")
@@ -186,9 +203,12 @@ if __name__ == "__main__":
         "verbose": args.verbose,
     }
 
-    found, result = check_mailman(args.target, settings)
-    if found:
-        print("[+] Mailman detected")
-    else:
-        print("[!] Mailman not found")
-    print(result)
+    try:
+        found, result = check_mailman(args.target, settings)
+        if found:
+            console.print("[+] Mailman detected", style="bold green")
+        else:
+            console.print("[!] Mailman not found", style="bold red")
+        console.print(result)
+    except KeyboardInterrupt:
+        console.print("\n[!] Scan interrupted by user (Ctrl+C)", style="bold yellow")

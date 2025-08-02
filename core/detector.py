@@ -11,7 +11,7 @@ if not logger.hasHandlers():
     basicConfig(level=INFO, format='[%(levelname)s] %(message)s')
 
 
-def load_json_file(filepath: str) -> Optional[List[Dict]]:
+def load_json_file(filepath: str) -> Optional[Dict]:
     """Load JSON data from a file."""
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -54,8 +54,10 @@ def detect_mailman(
 
     for path in common_paths:
         full_url = urljoin(base_url + "/", path.lstrip("/"))
+        logger.info(f"Trying path: {full_url}")  # DEBUG
         try:
             response = session.get(full_url, timeout=timeout)
+            logger.info(f"Status code for {full_url}: {response.status_code}")  # DEBUG
             if not response.ok:
                 continue
 
@@ -141,11 +143,15 @@ def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
     Returns (found: bool, result: dict)
     """
     paths_file = settings.get("paths", "data/common_paths.json")
-    common_paths = load_json_file(paths_file)
+    common_paths_data = load_json_file(paths_file)
     fingerprints = load_json_file(settings.get("fingerprints", "data/fingerprints.json"))
 
-    if common_paths is None or fingerprints is None:
+    if common_paths_data is None or fingerprints is None:
         return False, {"error": "Failed to load required data files."}
+
+    common_paths = []
+    for key in ["v2_paths", "v3_paths"]:
+        common_paths.extend([item["path"] for item in common_paths_data.get(key, [])])
 
     result = detect_mailman(
         base_url,
@@ -159,8 +165,6 @@ def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
 
 # Optional standalone mode for testing this module directly
 if __name__ == "__main__":
-    import sys
-
     target = input("Enter target base URL (e.g., https://example.com): ").strip()
     settings = {
         "timeout": 5,

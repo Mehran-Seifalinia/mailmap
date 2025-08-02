@@ -1,8 +1,11 @@
 from argparse import ArgumentParser
 from sys import exit, stderr
 from traceback import print_exc
+from rich.console import Console
 
 from runner import run_scan
+
+console = Console()
 
 def parse_args():
     parser = ArgumentParser(description="Mailman Security Scanner CLI")
@@ -42,10 +45,13 @@ def main():
             output_file=args.output,
             output_format=args.format
         )
+    except KeyboardInterrupt:
+        console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
+        exit(130)
     except Exception as e:
-        print(f"[!] Error: {str(e)}", file=stderr)
+        console.print(f"[bold red][!] Error: {str(e)}[/bold red]")
         if args.verbose:
-            print_exc()
+            console.print_exception()
         exit(1)
 
 

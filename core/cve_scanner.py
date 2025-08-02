@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Tuple, Any
 from packaging.version import Version, InvalidVersion
-from packaging.specifiers import SpecifierSet
+from packaging.specifiers import SpecifierSet, InvalidSpecifier
 from requests import Session, Response
 from re import search, IGNORECASE
 from logging import getLogger
@@ -81,6 +81,9 @@ class CVEScanner:
             method = method.upper()
             response: Optional[Response] = None
 
+            headers = headers or {}
+            payload = payload or {}
+
             if method == "GET":
                 response = send_get_request(self.session, url, headers=headers, timeout=timeout)
             elif method == "POST":
@@ -95,7 +98,8 @@ class CVEScanner:
                 return False, f"Unexpected status code: {response.status_code}"
 
             if evidence_regex:
-                if search(evidence_regex, response.text, flags=IGNORECASE):
+                response_text = response.text or ""
+                if search(evidence_regex, response_text, flags=IGNORECASE):
                     return True, f"Evidence matched: {evidence_regex}"
                 else:
                     return False, "Evidence not found in response"
@@ -111,6 +115,7 @@ class CVEScanner:
         self,
         detected_version: Optional[str] = None,
         base_url: Optional[str] = None,
+        timeout: int = 10,  # اضافه کردم timeout به پارامترهای scan
     ) -> List[Dict[str, Any]]:
         """
         Scan loaded CVEs against the detected software version.
@@ -128,6 +133,20 @@ class CVEScanner:
                 description = cve.get("description", "")
                 cvss_raw = cve.get("cvss", "0.0")
                 test_info = cve.get("test", {})
+
+                # بررسی نوع test_info
+                if not isinstance(test_info, dict):
+                    print_warning(f"Invalid test info for CVE {cve_id}, skipping.")
+                    results.append({
+                        "id": cve_id,
+                        "description": description,
+                        "cvss": 0.0,
+                        "severity": "None",
+                        "status": "error",
+                        "reason": "Invalid test configuration",
+                    })
+                    continue
+
                 affected_versions = cve.get("affected_versions", [])
 
                 if isinstance(affected_versions, list):
@@ -146,17 +165,6 @@ class CVEScanner:
                 if detected_version and affected_versions_str:
                     try:
                         ver = Version(detected_version)
-                        spec_set = SpecifierSet(affected_versions_str)
-                        if ver not in spec_set:
-                            results.append({
-                                "id": cve_id,
-                                "description": description,
-                                "cvss": cvss,
-                                "severity": severity,
-                                "status": "skipped",
-                                "reason": "Version not affected",
-                            })
-                            continue
                     except InvalidVersion:
                         print_warning(f"Invalid detected version '{detected_version}' for CVE {cve_id}")
                         results.append({
@@ -166,6 +174,31 @@ class CVEScanner:
                             "severity": severity,
                             "status": "skipped",
                             "reason": "Invalid detected version format",
+                        })
+                        continue
+
+                    try:
+                        spec_set = SpecifierSet(affected_versions_str)
+                    except (InvalidSpecifier, Exception) as e:
+                        print_warning(f"Invalid version specifier in CVE {cve_id}: {affected_versions_str} - {e}")
+                        results.append({
+                            "id": cve_id,
+                            "description": description,
+                            "cvss": cvss,
+                            "severity": severity,
+                            "status": "skipped",
+                            "reason": "Invalid version specifier",
+                        })
+                        continue
+
+                    if ver not in spec_set:
+                        results.append({
+                            "id": cve_id,
+                            "description": description,
+                            "cvss": cvss,
+                            "severity": severity,
+                            "status": "skipped",
+                            "reason": "Version not affected",
                         })
                         continue
                 elif detected_version and not affected_versions_str:
@@ -178,7 +211,20 @@ class CVEScanner:
                 payload = test_info.get("data", None)
                 evidence_regex = test_info.get("evidence_regex") or test_info.get("evidence")
 
-                if not url and path and base_url:
+                # اعتبارسنجی base_url
+                if not url and path:
+                    if not base_url or not isinstance(base_url, str) or base_url.strip() == "":
+                        print_info(f"Invalid base URL for CVE {cve_id}, skipping.")
+                        results.append({
+                            "id": cve_id,
+                            "description": description,
+                            "cvss": cvss,
+                            "severity": severity,
+                            "status": "not_tested",
+                            "reason": "Invalid base URL",
+                        })
+                        continue
+                    # ساخت URL صحیح
                     if base_url.endswith("/") and path.startswith("/"):
                         url = base_url[:-1] + path
                     elif not base_url.endswith("/") and not path.startswith("/"):
@@ -193,6 +239,7 @@ class CVEScanner:
                         headers=headers,
                         payload=payload,
                         evidence_regex=evidence_regex,
+                        timeout=timeout,  # پاس دادن timeout به perform_test
                     )
                     results.append({
                         "id": cve_id,

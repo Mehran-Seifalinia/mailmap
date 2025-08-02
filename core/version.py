@@ -14,8 +14,16 @@ from requests.exceptions import (
     HTTPError
 )
 from core.utils import create_session
+from rich.console import Console
+from rich.theme import Theme
 
 logger = getLogger(__name__)
+console = Console(theme=Theme({
+    "error": "bold red",
+    "success": "bold green",
+    "warning": "bold yellow",
+    "info": "bold cyan"
+}))
 
 def load_fingerprints(filepath: str) -> List[Dict]:
     """Load fingerprint patterns from JSON file."""
@@ -187,18 +195,22 @@ if __name__ == "__main__":
         "delay": args.delay,
     }
 
-    result = get_version(args.target, settings, args.fingerprints)
+    try:
+        result = get_version(args.target, settings, args.fingerprints)
+    except KeyboardInterrupt:
+        console.print("\n[error]Process interrupted by user (Ctrl+C). Exiting...[/error]")
+        sys_exit(130)  # 128 + 2 for SIGINT
 
     if "error" in result:
-        print(f"[ERROR] {result['error']}", file=stderr)
+        console.print(f"[error]Error: {result['error']}[/error]")
         sys_exit(1)
 
     if result.get("conflict"):
-        print("Version conflict detected! Found versions:", ", ".join(result["versions"]), file=stderr)
+        console.print(f"[warning]Version conflict detected! Found versions: {', '.join(result['versions'])}[/warning]")
         sys_exit(2)
     elif result.get("version"):
-        print("Detected Mailman version:", result["version"])
+        console.print(f"[success]Detected Mailman version: {result['version']}[/success]")
         sys_exit(0)
     else:
-        print("No Mailman version detected.", file=stderr)
+        console.print("[info]No Mailman version detected.[/info]")
         sys_exit(3)

@@ -7,10 +7,16 @@ from typing import List, Dict
 from urllib3 import disable_warnings, exceptions as urllib3_exceptions
 from re import compile as re_compile
 from sys import exit as sys_exit
+from signal import signal, SIGINT
+from colorama import Fore, Style, init
+
+# Initialize colorama for colored output
+init(autoreset=True)
 
 # Disable SSL warnings (since verify=False is used)
 disable_warnings(urllib3_exceptions.InsecureRequestWarning)
 
+# User agents for header rotation
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/102.0",
@@ -18,13 +24,20 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0",
 ]
 
-REQUEST_DELAY = 1  # Delay between requests
+REQUEST_DELAY = 1  # seconds delay between requests
 
-# Precompiled pattern for detecting Mailman-related content
+# Precompiled pattern for Mailman-related content detection (case-insensitive)
 MAILMAN_PATTERN = re_compile(
     r"(mailman|gnu|listinfo|hyperkitty|postorius|mailing list|admin)",
     flags=2  # re.IGNORECASE
 )
+
+def handle_sigint(signum, frame):
+    print(f"\n{Fore.RED}[!] Interrupted by user (Ctrl+C). Exiting...{Style.RESET_ALL}")
+    sys_exit(0)
+
+# Register signal handler for Ctrl+C
+signal(SIGINT, handle_sigint)
 
 def is_valid_url(url: str) -> bool:
     parsed = urlparse(url)
@@ -39,13 +52,13 @@ def load_common_paths(filepath: str, version: str = "v2") -> List[Dict]:
         elif version == "v3":
             return data.get("v3_paths", [])
         else:
-            print(f"[!] Unknown version '{version}', defaulting to 'v2'")
+            print(f"{Fore.YELLOW}[!] Unknown version '{version}', defaulting to 'v2'{Style.RESET_ALL}")
             return data.get("v2_paths", [])
     except (FileNotFoundError, OSError) as e:
-        print(f"[!] Error loading common paths file: {e}")
+        print(f"{Fore.RED}[!] Error loading common paths file: {e}{Style.RESET_ALL}")
         return []
     except Exception as e:
-        print(f"[!] Unexpected error loading common paths file: {e}")
+        print(f"{Fore.RED}[!] Unexpected error loading common paths file: {e}{Style.RESET_ALL}")
         return []
 
 def check_paths(base_url: str, paths: List[Dict], timeout: int = 5) -> List[Dict]:
@@ -75,36 +88,43 @@ def check_paths(base_url: str, paths: List[Dict], timeout: int = 5) -> List[Dict
                     "access_level": item.get("access_level", "unknown")
                 })
         except (Timeout, ConnectionError) as e:
-            print(f"[!] Connection error at {full_url}: {e}")
+            print(f"{Fore.YELLOW}[!] Connection error at {full_url}: {e}{Style.RESET_ALL}")
         except (TooManyRedirects, HTTPError, RequestException) as e:
-            print(f"[!] Request failed at {full_url}: {e}")
+            print(f"{Fore.YELLOW}[!] Request failed at {full_url}: {e}{Style.RESET_ALL}")
         except Exception as e:
-            print(f"[!] Unexpected error at {full_url}: {e}")
+            print(f"{Fore.RED}[!] Unexpected error at {full_url}: {e}{Style.RESET_ALL}")
 
         sleep(REQUEST_DELAY)
 
     return accessible_paths
 
-# Test block for standalone execution
 if __name__ == "__main__":
-    target = input("Enter target base URL (e.g., https://example.com): ").strip()
-    version = input("Enter Mailman version to scan (v2 or v3): ").strip().lower()
+    try:
+        target = input("Enter target base URL (e.g., https://example.com): ").strip()
+        version = input("Enter Mailman version to scan (v2 or v3): ").strip().lower()
 
-    if version not in ["v2", "v3"]:
-        print("[!] Invalid version specified. Defaulting to v2.")
-        version = "v2"
+        if version not in ["v2", "v3"]:
+            print(f"{Fore.YELLOW}[!] Invalid version specified. Defaulting to v2.{Style.RESET_ALL}")
+            version = "v2"
 
-    paths = load_common_paths("data/common_paths.json", version)
-    if not paths:
-        print("[!] No paths loaded. Exiting.")
+        paths = load_common_paths("data/common_paths.json", version)
+        if not paths:
+            print(f"{Fore.RED}[!] No paths loaded. Exiting.{Style.RESET_ALL}")
+            sys_exit(1)
+
+        results = check_paths(target, paths)
+        if results and isinstance(results[0], dict) and "error" in results[0]:
+            print(f"{Fore.RED}Error: {results[0]['error']}{Style.RESET_ALL}")
+        elif results:
+            print(f"\n{Fore.GREEN}Accessible Mailman paths:{Style.RESET_ALL}")
+            for item in results:
+                print(f"{Fore.CYAN}{item['path']} - HTTP {item['status_code']} - {item['description']} - Access level: {item['access_level']}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}No accessible Mailman paths found.{Style.RESET_ALL}")
+
+    except KeyboardInterrupt:
+        print(f"\n{Fore.RED}[!] Interrupted by user (Ctrl+C). Exiting...{Style.RESET_ALL}")
+        sys_exit(0)
+    except Exception as e:
+        print(f"{Fore.RED}[!] Fatal error: {e}{Style.RESET_ALL}")
         sys_exit(1)
-
-    results = check_paths(target, paths)
-    if results and isinstance(results[0], dict) and "error" in results[0]:
-        print("Error:", results[0]["error"])
-    elif results:
-        print("\nAccessible Mailman paths:")
-        for item in results:
-            print(f"{item['path']} - HTTP {item['status_code']} - {item['description']} - Access level: {item['access_level']}")
-    else:
-        print("No accessible Mailman paths found.")

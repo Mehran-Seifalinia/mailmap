@@ -1,9 +1,11 @@
-from logging import getLogger
 from typing import List, Dict, Optional, Tuple, Any
 from packaging.version import Version, InvalidVersion
 from packaging.specifiers import SpecifierSet
 from requests import Session, Response
 from re import search, IGNORECASE
+from logging import getLogger
+
+from colorama import init as colorama_init, Fore, Style
 
 from core.utils import (
     create_session,
@@ -13,7 +15,20 @@ from core.utils import (
     log_error,
 )
 
+colorama_init(autoreset=True)
 logger = getLogger(__name__)
+
+
+def print_error(message: str):
+    print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} {message}")
+
+
+def print_warning(message: str):
+    print(f"{Fore.YELLOW}[WARNING]{Style.RESET_ALL} {message}")
+
+
+def print_info(message: str):
+    print(f"{Fore.CYAN}[INFO]{Style.RESET_ALL} {message}")
 
 
 def get_cvss_severity(score: float) -> str:
@@ -29,6 +44,11 @@ def get_cvss_severity(score: float) -> str:
     return "None"
 
 
+class CVEScannerException(Exception):
+    """Custom exception for CVE Scanner errors."""
+    pass
+
+
 class CVEScanner:
     def __init__(self, cve_data_path: str = "data/cves.json"):
         """Initialize CVE scanner by loading CVE definitions and creating HTTP session."""
@@ -39,7 +59,7 @@ class CVEScanner:
         """Load CVE definitions from a JSON file."""
         data = read_json_file(path)
         if not data or not isinstance(data, list):
-            logger.warning(f"Empty, invalid, or malformed CVE data file: {path}")
+            print_warning(f"Empty, invalid, or malformed CVE data file: {path}")
             return []
         return data
 
@@ -75,17 +95,16 @@ class CVEScanner:
                 return False, f"Unexpected status code: {response.status_code}"
 
             if evidence_regex:
-                # Search evidence regex in response text case-insensitively
                 if search(evidence_regex, response.text, flags=IGNORECASE):
                     return True, f"Evidence matched: {evidence_regex}"
                 else:
                     return False, "Evidence not found in response"
 
-            # If no evidence regex to check, success is based on status code only
             return True, "Expected response received"
 
         except Exception as e:
             log_error(f"Exception during test request to {url}: {e}")
+            print_error(f"Exception during test request to {url}: {e}")
             return False, f"Exception during test: {e}"
 
     def scan(
@@ -99,105 +118,107 @@ class CVEScanner:
         Returns list of CVE scan results with statuses and reasons.
         """
         results = []
+        try:
+            for cve in self.cves:
+                if not all(k in cve for k in ("id", "description", "test")):
+                    print_warning(f"Malformed CVE entry skipped: {cve}")
+                    continue
 
-        for cve in self.cves:
-            # Check essential fields exist
-            if not all(k in cve for k in ("id", "description", "test")):
-                logger.warning(f"Malformed CVE entry skipped: {cve}")
-                continue
+                cve_id = cve.get("id", "UNKNOWN")
+                description = cve.get("description", "")
+                cvss_raw = cve.get("cvss", "0.0")
+                test_info = cve.get("test", {})
+                affected_versions = cve.get("affected_versions", [])
 
-            cve_id = cve.get("id", "UNKNOWN")
-            description = cve.get("description", "")
-            cvss_raw = cve.get("cvss", "0.0")
-            test_info = cve.get("test", {})
-            affected_versions = cve.get("affected_versions", [])
+                if isinstance(affected_versions, list):
+                    affected_versions_str = ",".join(affected_versions)
+                else:
+                    affected_versions_str = str(affected_versions)
 
-            # Convert affected_versions list to string for SpecifierSet
-            if isinstance(affected_versions, list):
-                affected_versions_str = ",".join(affected_versions)
-            else:
-                affected_versions_str = str(affected_versions)
-
-            # Parse CVSS score safely
-            try:
-                cvss = float(cvss_raw)
-            except (ValueError, TypeError):
-                cvss = 0.0
-                logger.warning(f"Invalid CVSS format in CVE {cve_id}: {cvss_raw}")
-
-            severity = get_cvss_severity(cvss)
-
-            # Check if detected version is affected
-            if detected_version and affected_versions_str:
                 try:
-                    ver = Version(detected_version)
-                    spec_set = SpecifierSet(affected_versions_str)
-                    if ver not in spec_set:
+                    cvss = float(cvss_raw)
+                except (ValueError, TypeError):
+                    cvss = 0.0
+                    print_warning(f"Invalid CVSS format in CVE {cve_id}: {cvss_raw}")
+
+                severity = get_cvss_severity(cvss)
+
+                if detected_version and affected_versions_str:
+                    try:
+                        ver = Version(detected_version)
+                        spec_set = SpecifierSet(affected_versions_str)
+                        if ver not in spec_set:
+                            results.append({
+                                "id": cve_id,
+                                "description": description,
+                                "cvss": cvss,
+                                "severity": severity,
+                                "status": "skipped",
+                                "reason": "Version not affected",
+                            })
+                            continue
+                    except InvalidVersion:
+                        print_warning(f"Invalid detected version '{detected_version}' for CVE {cve_id}")
                         results.append({
                             "id": cve_id,
                             "description": description,
                             "cvss": cvss,
                             "severity": severity,
                             "status": "skipped",
-                            "reason": "Version not affected",
+                            "reason": "Invalid detected version format",
                         })
                         continue
-                except InvalidVersion:
-                    logger.warning(f"Invalid detected version format '{detected_version}' for CVE {cve_id}")
+                elif detected_version and not affected_versions_str:
+                    print_info(f"No affected version info for CVE {cve_id}, testing anyway.")
+
+                method = test_info.get("method", "GET").upper()
+                path = test_info.get("path", "")
+                url = test_info.get("url", None)
+                headers = test_info.get("headers", None)
+                payload = test_info.get("data", None)
+                evidence_regex = test_info.get("evidence_regex") or test_info.get("evidence")
+
+                if not url and path and base_url:
+                    if base_url.endswith("/") and path.startswith("/"):
+                        url = base_url[:-1] + path
+                    elif not base_url.endswith("/") and not path.startswith("/"):
+                        url = base_url + "/" + path
+                    else:
+                        url = base_url + path
+
+                if url:
+                    test_passed, reason = self.perform_test(
+                        method,
+                        url,
+                        headers=headers,
+                        payload=payload,
+                        evidence_regex=evidence_regex,
+                    )
                     results.append({
                         "id": cve_id,
                         "description": description,
                         "cvss": cvss,
                         "severity": severity,
-                        "status": "skipped",
-                        "reason": "Invalid detected version format",
+                        "status": "vulnerable" if test_passed else "not_vulnerable" if test_passed is False else "error",
+                        "reason": reason,
                     })
-                    continue
-            elif detected_version and not affected_versions_str:
-                logger.debug(f"No affected version info for CVE {cve_id}, testing anyway.")
-
-            # Prepare test parameters
-            method = test_info.get("method", "GET").upper()
-            path = test_info.get("path", "")
-            url = test_info.get("url", None)
-            headers = test_info.get("headers", None)
-            payload = test_info.get("data", None)  # data key in JSON used as payload
-            evidence_regex = test_info.get("evidence_regex") or test_info.get("evidence")
-
-            # Construct full URL if needed
-            if not url and path and base_url:
-                if base_url.endswith("/") and path.startswith("/"):
-                    url = base_url[:-1] + path
-                elif not base_url.endswith("/") and not path.startswith("/"):
-                    url = base_url + "/" + path
                 else:
-                    url = base_url + path
+                    print_info(f"No URL or path provided for test in CVE {cve_id}")
+                    results.append({
+                        "id": cve_id,
+                        "description": description,
+                        "cvss": cvss,
+                        "severity": severity,
+                        "status": "not_tested",
+                        "reason": "No test URL or path provided",
+                    })
 
-            if url:
-                test_passed, reason = self.perform_test(
-                    method,
-                    url,
-                    headers=headers,
-                    payload=payload,
-                    evidence_regex=evidence_regex,
-                )
-                results.append({
-                    "id": cve_id,
-                    "description": description,
-                    "cvss": cvss,
-                    "severity": severity,
-                    "status": "vulnerable" if test_passed else "not_vulnerable" if test_passed is False else "error",
-                    "reason": reason,
-                })
-            else:
-                logger.info(f"No URL or path provided for test in CVE {cve_id}")
-                results.append({
-                    "id": cve_id,
-                    "description": description,
-                    "cvss": cvss,
-                    "severity": severity,
-                    "status": "not_tested",
-                    "reason": "No test URL or path provided",
-                })
+            return results
 
-        return results
+        except KeyboardInterrupt:
+            print_error("Scan interrupted by user (Ctrl+C). Exiting gracefully.")
+            raise SystemExit(1)
+        except Exception as e:
+            print_error(f"Unexpected error during scan: {e}")
+            log_error(f"Unexpected error during scan: {e}")
+            raise CVEScannerException(str(e))

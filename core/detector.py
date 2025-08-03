@@ -1,7 +1,7 @@
 from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError, Semaphore, TimeoutError, wait_for
 from json import load
 from logging import getLogger, INFO, basicConfig
-from re import compile as re_compile, IGNORECASE, Pattern, Match
+from re import compile as re_compile, IGNORECASE, Pattern, Match, search
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -23,7 +23,7 @@ if not logger.hasHandlers():
 def load_json_file(filepath: str) -> Optional[Dict]:
     """
     Load and parse a JSON file.
-    Returns None if any error occurs.
+    Return the dictionary on success, None on failure.
     """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -34,15 +34,15 @@ def load_json_file(filepath: str) -> Optional[Dict]:
 
 def is_valid_url(url: str) -> bool:
     """
-    Check if the given URL has valid HTTP or HTTPS scheme and a netloc.
+    Validate if the input string is a valid HTTP or HTTPS URL.
     """
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[Pattern]]]:
     """
-    Compile regex patterns for fingerprints.
-    If no pattern is provided, compiled_pattern is None.
+    Compile regex patterns in fingerprints list for faster matching.
+    Each element in returned list is a tuple of (fingerprint dict, compiled pattern or None).
     """
     compiled = []
     for fp in fingerprints:
@@ -58,6 +58,7 @@ def extract_version_from_match(match: Optional[Match]) -> Optional[str]:
     """
     if not match:
         return None
+
     # Try to get the first captured group, else full match
     if match.lastindex and match.lastindex >= 1:
         version_candidate = match.group(1)
@@ -75,6 +76,12 @@ def extract_version_from_match(match: Optional[Match]) -> Optional[str]:
     if lower_version in ("version", "generic", ""):
         return None
 
+    # Ensure version contains at least one digit and a dot (common version format)
+    if not search(r"\d", version_candidate):
+        return None
+    if '.' not in version_candidate:
+        return None
+
     return version_candidate
 
 def match_fingerprint(
@@ -87,8 +94,8 @@ def match_fingerprint(
     verbose: bool = False
 ) -> Optional[Dict]:
     """
-    Match a single fingerprint against the HTTP response.
-    Returns a dict with detection info if matched, else None.
+    Match a single fingerprint against the response content (headers, body, or url).
+    Return a dict with match details if matched, otherwise None.
     """
     method = fingerprint.get("method", "").lower()
     location = fingerprint.get("location", "")
@@ -96,7 +103,7 @@ def match_fingerprint(
     pattern = fingerprint.get("pattern", "")
     is_status_ok = 200 <= status_code < 300
 
-    # Match based on URL presence or pattern
+    # Match based on URL pattern
     if method == "url":
         if is_status_ok and ((not pattern and location in url) or (compiled_pattern and compiled_pattern.search(url))):
             if verbose:
@@ -109,12 +116,12 @@ def match_fingerprint(
                 "evidence": f"URL matched pattern: {pattern or location}"
             }
 
-    # Match based on headers
+    # Match based on HTTP headers
     elif method == "header" and compiled_pattern:
-        # Headers keys may be case-insensitive; normalize to lower
+        # Extract header key from location like "headers.X-Mailman-Version"
         header_key = location.split(".", 1)[-1].lower()
-        # Get header values case-insensitively
         header_value = ""
+        # Case-insensitive search for header key
         for hk, hv in response_headers.items():
             if hk.lower() == header_key:
                 header_value = hv
@@ -124,40 +131,36 @@ def match_fingerprint(
             match_obj = compiled_pattern.search(header_value)
             if match_obj:
                 extracted_version = extract_version_from_match(match_obj)
-                # Avoid fallback to generic fingerprint version
-                if not extracted_version or extracted_version.lower() in ("generic", "version", ""):
-                    extracted_version = None
-                # If no valid extracted version, skip returning this fingerprint
-                if extracted_version:
-                    if verbose:
-                        logger.info(f"Header matched at {url}: {header_key} = {header_value}")
-                    return {
-                        "found": True,
-                        "url": url,
-                        "status_code": status_code,
-                        "version": extracted_version,
-                        "evidence": f"Header {header_key}: {header_value}"
-                    }
+                if not extracted_version:
+                    extracted_version = version  # fallback to fingerprint version
+                if verbose:
+                    logger.info(f"Header matched at {url}: {header_key} = {header_value}")
+                return {
+                    "found": True,
+                    "url": url,
+                    "status_code": status_code,
+                    "version": extracted_version,
+                    "evidence": f"Header {header_key}: {header_value}"
+                }
 
-    # Match based on body content
+    # Match based on response body content
     elif method == "body" and compiled_pattern:
         if is_status_ok:
+            # Limit body size to 100k chars for performance
             match_obj = compiled_pattern.search(response_text[:100_000])
             if match_obj:
                 extracted_version = extract_version_from_match(match_obj)
-                # Avoid fallback to generic fingerprint version
-                if not extracted_version or extracted_version.lower() in ("generic", "version", ""):
-                    extracted_version = None
-                if extracted_version:
-                    if verbose:
-                        logger.info(f"Body matched at {url}")
-                    return {
-                        "found": True,
-                        "url": url,
-                        "status_code": status_code,
-                        "version": extracted_version,
-                        "evidence": f"Body matched pattern: {pattern}"
-                    }
+                if not extracted_version:
+                    extracted_version = version
+                if verbose:
+                    logger.info(f"Body matched at {url}")
+                return {
+                    "found": True,
+                    "url": url,
+                    "status_code": status_code,
+                    "version": extracted_version,
+                    "evidence": f"Body matched pattern: {pattern}"
+                }
 
     return None
 
@@ -173,7 +176,8 @@ async def fetch_and_check(
     semaphore: Semaphore
 ) -> Optional[Dict]:
     """
-    Fetch a URL and check it against compiled fingerprints.
+    Fetch a URL (base_url + path) and check all fingerprints against the response.
+    Return the first matched fingerprint dict or None.
     """
     url = urljoin(base_url + "/", path.lstrip("/"))
     if verbose:
@@ -214,8 +218,8 @@ async def detect_mailman_async(
     verbose: bool = False
 ) -> Dict:
     """
-    Main async function to detect Mailman by checking multiple paths concurrently.
-    Returns detection result dict.
+    Asynchronously check multiple paths to detect Mailman installation by matching fingerprints.
+    Return a dict with detection info or failure reason.
     """
     if not is_valid_url(base_url):
         return {"found": False, "error": "Invalid URL"}
@@ -223,7 +227,7 @@ async def detect_mailman_async(
     compiled_fps = compile_fingerprints(fingerprints)
     headers = {"User-Agent": "MailmapScanner/2.0"}
     timeout_obj = ClientTimeout(total=timeout)
-    semaphore = Semaphore(10)  # Limit concurrent requests
+    semaphore = Semaphore(10)  # Limit concurrency to 10 requests at a time
 
     async with ClientSession(headers=headers, timeout=timeout_obj) as session:
         tasks = [
@@ -231,13 +235,14 @@ async def detect_mailman_async(
             for path in paths
         ]
 
+        # Wait for any task to complete successfully
         while tasks:
             done, pending = await wait(tasks, return_when=FIRST_COMPLETED)
 
             for task in done:
                 result = task.result()
                 if result:
-                    # Cancel remaining tasks once a match is found
+                    # Cancel other pending tasks
                     for p in pending:
                         p.cancel()
                     try:
@@ -254,7 +259,8 @@ async def detect_mailman_async(
 
 def check_mailman(base_url: str, settings: Dict) -> Dict:
     """
-    Wrapper function to load necessary data files and run async detection.
+    Synchronous wrapper to detect Mailman by loading paths and fingerprints from files,
+    then running the async detection function.
     """
     paths_file = settings.get("paths", "data/common_paths.json")
     fingerprints_file = settings.get("fingerprints", "data/fingerprints.json")
@@ -279,7 +285,7 @@ def check_mailman(base_url: str, settings: Dict) -> Dict:
 
     return result
 
-# ------------- CLI ------------- #
+# ------------- CLI Entry Point ------------- #
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
@@ -300,13 +306,11 @@ if __name__ == "__main__":
     try:
         result = check_mailman(args.target, settings)
         if result.get("found"):
-            console.print("[+] Mailman detected", style="bold green")
+            console.print(f"[+] Mailman detected: {result}", style="bold green")
         else:
-            console.print("[!] Mailman not found", style="bold red")
+            console.print(f"[!] Mailman not found: {result}", style="bold red")
 
-        console.print(result)
-
-        # Extra check for invalid version format to warn user
+        # Extra check for invalid version format
         version = result.get("version")
         if version is None or version.lower() in ("generic", "version", ""):
             console.print("[!] Invalid version info format received.", style="bold yellow")

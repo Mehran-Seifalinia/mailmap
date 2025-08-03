@@ -139,7 +139,20 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
             details = result
             if not mailman_exists:
                 console.print(f"[bold red][!] Mailman not found on {target}.[/bold red]")
-                return  # Stop scanning if Mailman is not present
+                # Prepare minimal report indicating Mailman not found
+                report_data = {
+                    'mailman_found': False,
+                    'details': details,
+                    'version': None,
+                    'paths': [],
+                    'cves': [],
+                    'message': 'Mailman not found on target.'
+                }
+                # Save report if output file is specified
+                if output_file:
+                    report_generator.save_report(output_file, output_format, report_data)
+                    console.print(f"[bold green][+] Report saved to {output_file}[/bold green]")
+                return  # Stop further scanning after saving report
             console.print(f"[bold green][+] Mailman detected:[/bold green] {details}")
 
         # Step 2: Get Mailman version

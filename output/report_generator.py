@@ -1,5 +1,12 @@
 from json import dump
 from os import makedirs, path
+from html import escape
+from typing import Any, Dict, List, Union
+from logging import info, error, basicConfig, INFO
+
+DataType = Union[Dict[str, Any], List[Any], str, int, float, None]
+
+basicConfig(level=INFO, format='%(message)s')
 
 class ReportGenerator:
     CSS_STYLE = """
@@ -13,70 +20,73 @@ class ReportGenerator:
     </style>
     """
 
-    def __init__(self, output_dir="output"):
+    def __init__(self, output_dir: str = "output") -> None:
         self.output_dir = output_dir
         makedirs(self.output_dir, exist_ok=True)
 
-    def generate_json(self, data, filename="report.json"):
+    def generate_json(self, data: DataType, filename: str = "report.json") -> None:
         filepath = path.join(self.output_dir, filename)
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 dump(data, f, indent=4, ensure_ascii=False)
-            print(f"[✅] JSON report saved to {filepath}")
+            info(f"[✅] JSON report saved to {filepath}")
         except Exception as e:
-            print(f"[❌] Error saving JSON report: {e}")
+            error(f"[❌] Error saving JSON report: {e}")
 
-    def generate_markdown(self, data, filename="report.md"):
+    def generate_markdown(self, data: DataType, filename: str = "report.md") -> None:
         filepath = path.join(self.output_dir, filename)
         try:
             md = self._to_markdown(data)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(md)
-            print(f"[✅] Markdown report saved to {filepath}")
+            info(f"[✅] Markdown report saved to {filepath}")
         except Exception as e:
-            print(f"[❌] Error saving Markdown report: {e}")
+            error(f"[❌] Error saving Markdown report: {e}")
 
-    def generate_html(self, data, filename="report.html"):
+    def generate_html(self, data: DataType, filename: str = "report.html") -> None:
         filepath = path.join(self.output_dir, filename)
         try:
             html_content = self._to_html(data)
-            full_html = f"<!DOCTYPE html><html lang='fa'><head><meta charset='UTF-8'><title>گزارش Mailmap</title>{self.CSS_STYLE}</head><body>{html_content}</body></html>"
+            full_html = (
+                f"<!DOCTYPE html><html lang='fa'><head>"
+                f"<meta charset='UTF-8'><title>گزارش Mailmap</title>"
+                f"{self.CSS_STYLE}</head><body>{html_content}</body></html>"
+            )
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(full_html)
-            print(f"[✅] HTML report saved to {filepath}")
+            info(f"[✅] HTML report saved to {filepath}")
         except Exception as e:
-            print(f"[❌] Error saving HTML report: {e}")
+            error(f"[❌] Error saving HTML report: {e}")
 
-    def _to_markdown(self, data):
-        md = "# گزارش Mailmap\n\n"
-        for section, content in data.items():
-            md += f"## {section}\n\n"
-            if isinstance(content, dict):
-                for key, value in content.items():
-                    md += f"- **{key}**: {value}\n"
-            elif isinstance(content, list):
-                for item in content:
+    def _to_markdown(self, data: DataType, level: int = 1) -> str:
+        md = ""
+        if isinstance(data, dict):
+            for section, content in data.items():
+                md += f"{'#' * level} {section}\n\n"
+                md += self._to_markdown(content, level=level+1)
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, (dict, list)):
+                    md += self._to_markdown(item, level=level)
+                else:
                     md += f"- {item}\n"
-            else:
-                md += f"{content}\n"
             md += "\n"
+        else:
+            md += f"{data}\n\n"
         return md
 
-    def _to_html(self, data):
-        html = "<h1>گزارش Mailmap</h1>"
-        for section, content in data.items():
-            html += f"<h2>{section}</h2>"
-            if isinstance(content, dict):
-                html += "<table>"
-                html += "<tr><th>کلید</th><th>مقدار</th></tr>"
-                for key, value in content.items():
-                    html += f"<tr><td>{key}</td><td>{value}</td></tr>"
-                html += "</table>"
-            elif isinstance(content, list):
-                html += "<ul>"
-                for item in content:
-                    html += f"<li>{item}</li>"
-                html += "</ul>"
-            else:
-                html += f"<p>{content}</p>"
-        return html
+    def _to_html(self, data: DataType) -> str:
+        if isinstance(data, dict):
+            html_content = ""
+            for section, content in data.items():
+                html_content += f"<h2>{escape(str(section))}</h2>"
+                html_content += self._to_html(content)
+            return html_content
+        elif isinstance(data, list):
+            html_content = "<ul>"
+            for item in data:
+                html_content += f"<li>{self._to_html(item)}</li>"
+            html_content += "</ul>"
+            return html_content
+        else:
+            return f"<p>{escape(str(data))}</p>"

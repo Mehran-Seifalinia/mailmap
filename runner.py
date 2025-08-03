@@ -53,7 +53,10 @@ def load_common_paths(filepath: str) -> list:
         filepath (str): Path to JSON file containing common paths
 
     Returns:
-        list: Combined list of paths from both Mailman v2 and v3 or empty list if error occurs
+        list: Combined list of paths from both Mailman v2 and v3
+
+    Raises:
+        SystemExit: Exits the program if the file is missing, unreadable, or contains no paths.
     """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -62,10 +65,13 @@ def load_common_paths(filepath: str) -> list:
         for key in ["v2_paths", "v3_paths"]:
             if key in data and isinstance(data[key], list):
                 paths_list.extend(data[key])
+        if not paths_list:
+            console.print(f"[bold red][!] The sensitive paths file '{filepath}' is empty or invalid.[/bold red]")
+            sys_exit(1)
         return paths_list
     except Exception as e:
-        console.print(f"[bold red][!] Failed to load common paths file:[/bold red] {e}")
-        return []
+        console.print(f"[bold red][!] Failed to load sensitive paths file '{filepath}': {e}[/bold red]")
+        sys_exit(1)
 
 
 def handle_error(exc: Exception, verbose: bool = False) -> int:
@@ -154,14 +160,12 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
         # Step 3: Scan sensitive paths
         if scan_part in ['paths', 'full']:
             common_paths = load_common_paths(settings.get('paths', 'data/common_paths.json'))
-            if not common_paths:
-                console.print("[bold red][!] No common paths loaded, skipping path scan.[/bold red]")
-            else:
-                path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
-                for item in path_results:
-                    severity = item.get('severity', 'unknown')
-                    item_type = item.get('type', 'Unknown')
-                    console.print(f"[{severity_color(severity)}][!] Found:[/] {item_type} - {item.get('path', 'N/A')} - Severity: {severity}")
+            # Since load_common_paths exits on error or empty, we can safely continue here
+            path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
+            for item in path_results:
+                severity = item.get('severity', 'unknown')
+                item_type = item.get('type', 'Unknown')
+                console.print(f"[{severity_color(severity)}][!] Found:[/] {item_type} - {item.get('path', 'N/A')} - Severity: {severity}")
 
         # Step 4: Scan known CVEs based on version
         if scan_part in ['cve', 'full']:

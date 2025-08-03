@@ -1,4 +1,4 @@
-from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError, Semaphore, TimeoutError, wait_for
+from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError, TimeoutError, wait_for, Semaphore
 from json import load
 from logging import getLogger, INFO, basicConfig
 from re import compile as re_compile, IGNORECASE, Pattern
@@ -21,6 +21,7 @@ if not logger.hasHandlers():
 # ------------- Utility Functions ------------- #
 
 def load_json_file(filepath: str) -> Optional[Dict]:
+    """Load JSON data from a file."""
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return load(f)
@@ -29,10 +30,12 @@ def load_json_file(filepath: str) -> Optional[Dict]:
     return None
 
 def is_valid_url(url: str) -> bool:
+    """Validate URL scheme and domain."""
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[Pattern]]]:
+    """Compile regex patterns from fingerprints."""
     compiled = []
     for fp in fingerprints:
         pattern = fp.get("pattern", "")
@@ -49,6 +52,10 @@ def match_fingerprint(
     compiled_pattern: Optional[Pattern],
     verbose: bool = False
 ) -> Optional[Dict]:
+    """
+    Check if a fingerprint matches the given response.
+    Returns match info dict or None.
+    """
     method = fingerprint.get("method", "").lower()
     location = fingerprint.get("location", "")
     version = fingerprint.get("version", "Unknown")
@@ -67,6 +74,7 @@ def match_fingerprint(
                 "evidence": f"URL matched pattern: {pattern or location}"
             }
     elif method == "header" and compiled_pattern:
+        # Extract header key after "headers." prefix if present
         header_key = location.split(".", 1)[-1]
         header_value = response_headers.get(header_key, "")
         if header_value and compiled_pattern.search(header_value):
@@ -104,6 +112,7 @@ async def fetch_and_check(
     verbose: bool,
     semaphore: Semaphore
 ) -> Optional[Dict]:
+    """Fetch URL and check all fingerprints for a match."""
     url = urljoin(base_url + "/", path.lstrip("/"))
     if verbose:
         logger.info(f"Checking URL: {url}")
@@ -142,6 +151,10 @@ async def detect_mailman_async(
     timeout: int = 5,
     verbose: bool = False
 ) -> Dict:
+    """
+    Main async function to detect Mailman by scanning given paths and applying fingerprints.
+    Returns first positive match or failure dict.
+    """
     if not is_valid_url(base_url):
         return {"found": False, "error": "Invalid URL"}
 
@@ -162,12 +175,18 @@ async def detect_mailman_async(
             for task in done:
                 result = task.result()
                 if result:
+                    # Cancel all other pending tasks since we got a match
                     for p in pending:
                         p.cancel()
                     try:
                         await wait_for(gather(*pending, return_exceptions=True), timeout=3)
                     except TimeoutError:
                         logger.warning("Timeout while cancelling pending tasks")
+
+                    # Filter out "Generic" version strings as invalid version info
+                    if "version" in result and result["version"] == "Generic":
+                        result["version"] = None
+
                     return result
 
             tasks = list(pending)
@@ -177,6 +196,9 @@ async def detect_mailman_async(
 # ------------- Wrapper Function ------------- #
 
 def check_mailman(base_url: str, settings: Dict) -> Dict:
+    """
+    Wrapper to load data files, run async detection and post-process results.
+    """
     paths_file = settings.get("paths", "data/common_paths.json")
     fingerprints_file = settings.get("fingerprints", "data/fingerprints.json")
 
@@ -197,6 +219,10 @@ def check_mailman(base_url: str, settings: Dict) -> Dict:
         timeout=settings.get("timeout", 5),
         verbose=settings.get("verbose", False)
     ))
+
+    # Final post-processing: ensure "Generic" versions are treated as no valid version
+    if "version" in result and result["version"] == "Generic":
+        result["version"] = None
 
     return result
 

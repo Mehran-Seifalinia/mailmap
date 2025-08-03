@@ -106,11 +106,14 @@ async def detect_version(
                                     logger.debug(f"Ignored generic version label for URL presence: {url_to_check}")
                             else:
                                 ver = extract_version_from_text(text, pattern)
-                                if ver and ver.lower() != "generic":
-                                    found_versions.add(ver)
-                                    logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
+                                if ver:
+                                    if ver.lower() == "generic":
+                                        logger.debug(f"Ignored generic version label from {url_to_check}")
+                                    else:
+                                        found_versions.add(ver)
+                                        logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
                                 else:
-                                    logger.debug(f"Ignored generic or empty version from {url_to_check}")
+                                    logger.debug(f"No version found in response from {url_to_check}")
 
                 elif method == "header":
                     urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
@@ -123,13 +126,16 @@ async def detect_version(
                             header_val = response.headers.get(location)
                             if header_val and pattern:
                                 ver = extract_version_from_text(header_val, pattern)
-                                if ver and ver.lower() != "generic":
-                                    found_versions.add(ver)
-                                    found_in_header = True
-                                    logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
-                                    break
+                                if ver:
+                                    if ver.lower() == "generic":
+                                        logger.debug(f"Ignored generic version label from header '{location}' at {u}")
+                                    else:
+                                        found_versions.add(ver)
+                                        found_in_header = True
+                                        logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
+                                        break
                                 else:
-                                    logger.debug(f"Ignored generic or empty version from header '{location}' at {u}")
+                                    logger.debug(f"No version found in header '{location}' at {u}")
                     if found_in_header:
                         continue
 
@@ -147,12 +153,15 @@ async def detect_version(
                             content = content[:100_000]
                             if pattern:
                                 ver = extract_version_from_text(content, pattern)
-                                if ver and ver.lower() != "generic":
-                                    found_versions.add(ver)
-                                    logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
-                                    break
+                                if ver:
+                                    if ver.lower() == "generic":
+                                        logger.debug(f"Ignored generic version label from body content at {u}")
+                                    else:
+                                        found_versions.add(ver)
+                                        logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
+                                        break
                                 else:
-                                    logger.debug(f"Ignored generic or empty version from body content at {u}")
+                                    logger.debug(f"No version found in body content at {u}")
 
             except Exception as e:
                 logger.error(f"Unexpected error during fingerprint scan at {url_to_check if url_to_check else 'N/A'}: {e}")
@@ -160,7 +169,7 @@ async def detect_version(
             await sleep(delay)
 
     if not found_versions:
-        logger.info("No Mailman version detected.")
+        logger.info("No valid Mailman version detected (only generic or none found).")
         return {"version": None}
 
     if len(found_versions) == 1:

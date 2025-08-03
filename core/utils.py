@@ -1,6 +1,6 @@
-from aiohttp import ClientSession, ClientConnectionError, ClientResponseError
+from aiohttp import ClientSession, ClientConnectionError, ClientResponseError, ClientTimeout, ClientResponse
 from asyncio import TimeoutError
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from json import load, dump, JSONDecodeError
 from logging import getLogger, Logger, basicConfig
 from rich.logging import RichHandler
@@ -14,29 +14,41 @@ basicConfig(
 )
 logger: Logger = getLogger("mailmap")
 
-# ---- بخش HTTP async با aiohttp ----
+# ---- ایجاد session به صورت sync چون خود ClientSession async نیست ----
 
-async def create_session(headers: Optional[Dict[str, str]] = None, user_agent: Optional[str] = None) -> ClientSession:
-    session_headers = headers or {}
+def create_session(headers: Optional[Dict[str, str]] = None, user_agent: Optional[str] = None) -> ClientSession:
+    session_headers = headers.copy() if headers else {}
     if user_agent:
         session_headers["User-Agent"] = user_agent
     else:
-        session_headers["User-Agent"] = "MailmapScanner/1.0"
+        session_headers.setdefault("User-Agent", "MailmapScanner/1.0")
     return ClientSession(headers=session_headers)
 
-async def send_get_request(session: ClientSession, url: str, timeout: int = 5, headers: Optional[Dict[str, str]] = None) -> Optional[ClientSession]:
+# ---- توابع async ارسال درخواست GET و POST ----
+
+async def send_get_request(
+    session: ClientSession,
+    url: str,
+    timeout: int = 5,
+    headers: Optional[Dict[str, str]] = None,
+    return_json: bool = True
+) -> Optional[Union[dict, str]]:
     try:
-        async with session.get(url, timeout=timeout, headers=headers) as response:
+        timeout_obj = ClientTimeout(total=timeout)
+        async with session.get(url, timeout=timeout_obj, headers=headers) as response:
             response.raise_for_status()
-            return response
+            if return_json:
+                return await response.json(content_type=None)  # content_type=None برای انعطاف بیشتر
+            else:
+                return await response.text()
     except TimeoutError:
-        logger.error(f"[red]GET request to {url} timed out.[/red]")
+        logger.error(f"GET request to {url} timed out.")
     except ClientConnectionError:
-        logger.error(f"[red]Connection error during GET request to {url}.[/red]")
+        logger.error(f"Connection error during GET request to {url}.")
     except ClientResponseError as e:
-        logger.error(f"[red]Request to {url} failed: {e}[/red]")
+        logger.error(f"Request to {url} failed: {e}")
     except Exception as e:
-        logger.error(f"[red]Unexpected error on GET request to {url}: {e}[/red]")
+        logger.error(f"Unexpected error on GET request to {url}: {e}")
     return None
 
 async def send_post_request(
@@ -45,41 +57,46 @@ async def send_post_request(
     timeout: int = 5,
     headers: Optional[Dict[str, str]] = None,
     json_payload: Optional[Dict] = None,
-) -> Optional[ClientSession]:
+    return_json: bool = True
+) -> Optional[Union[dict, str]]:
     try:
-        async with session.post(url, timeout=timeout, headers=headers, json=json_payload) as response:
+        timeout_obj = ClientTimeout(total=timeout)
+        async with session.post(url, timeout=timeout_obj, headers=headers, json=json_payload) as response:
             response.raise_for_status()
-            return response
+            if return_json:
+                return await response.json(content_type=None)
+            else:
+                return await response.text()
     except TimeoutError:
-        logger.error(f"[red]POST request to {url} timed out.[/red]")
+        logger.error(f"POST request to {url} timed out.")
     except ClientConnectionError:
-        logger.error(f"[red]Connection error during POST request to {url}.[/red]")
+        logger.error(f"Connection error during POST request to {url}.")
     except ClientResponseError as e:
-        logger.error(f"[red]Request to {url} failed: {e}[/red]")
+        logger.error(f"Request to {url} failed: {e}")
     except Exception as e:
-        logger.error(f"[red]Unexpected error on POST request to {url}: {e}[/red]")
+        logger.error(f"Unexpected error on POST request to {url}: {e}")
     return None
 
-# ---- لاگ‌های رنگی و استاندارد ----
+# ---- لاگینگ بدون رنگ‌دهی دوباره چون RichHandler خودش این کار رو انجام میده ----
 
 def log_info(message: str) -> None:
-    logger.info(f"[green]{message}[/green]")
+    logger.info(message)
 
 def log_error(message: str) -> None:
-    logger.error(f"[red]{message}[/red]")
+    logger.error(message)
 
-# ---- توابع sync برای خواندن و نوشتن JSON ----
+# ---- توابع sync خواندن و نوشتن JSON ----
 
 def read_json_file(filepath: str) -> Optional[Any]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return load(f)
     except FileNotFoundError:
-        logger.error(f"[red]JSON file not found: {filepath}[/red]")
+        logger.error(f"JSON file not found: {filepath}")
     except JSONDecodeError as e:
-        logger.error(f"[red]Failed to decode JSON file {filepath}: {e}[/red]")
+        logger.error(f"Failed to decode JSON file {filepath}: {e}")
     except Exception as e:
-        logger.error(f"[red]Unexpected error reading JSON file {filepath}: {e}[/red]")
+        logger.error(f"Unexpected error reading JSON file {filepath}: {e}")
     return None
 
 def write_json_file(filepath: str, data: Any) -> bool:
@@ -88,5 +105,5 @@ def write_json_file(filepath: str, data: Any) -> bool:
             dump(data, f, indent=4, ensure_ascii=False)
         return True
     except Exception as e:
-        logger.error(f"[red]Failed to write JSON file {filepath}: {e}[/red]")
+        logger.error(f"Failed to write JSON file {filepath}: {e}")
         return False

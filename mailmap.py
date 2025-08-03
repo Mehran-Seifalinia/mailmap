@@ -1,5 +1,5 @@
 from argparse import ArgumentParser, Namespace
-from sys import exit
+from sys import exit as sys_exit  # import exit with alias for consistency
 from rich.console import Console
 
 from runner import run_scan
@@ -36,7 +36,6 @@ def main() -> None:
     """
     args = parse_args()
 
-    # Only add keys if they have meaningful values (non-None)
     settings = {
         'timeout': args.timeout,
         'delay': args.delay,
@@ -55,16 +54,17 @@ def main() -> None:
             scan_part=args.scan_part,
             settings=settings,
             output_file=args.output,
-            output_format=args.format
+            output_format=args.format,
+            verbose=args.verbose  # pass verbose to runner
         )
     except KeyboardInterrupt:
         console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
-        exit(130)
+        sys_exit(130)
     except Exception as e:
         console.print(f"[bold red][!] Error: {str(e)}[/bold red]")
         if args.verbose:
             console.print_exception()
-        exit(1)
+        sys_exit(1)
 
 
 if __name__ == "__main__":

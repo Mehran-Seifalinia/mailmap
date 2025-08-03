@@ -1,11 +1,12 @@
-from aiohttp import ClientSession, ClientConnectionError, ClientResponseError, ClientTimeout, ClientResponse
+from aiohttp import ClientSession, ClientConnectionError, ClientResponseError, ClientTimeout
 from asyncio import TimeoutError
 from typing import Optional, Dict, Any, Union
 from json import load, dump, JSONDecodeError
 from logging import getLogger, Logger, basicConfig
 from rich.logging import RichHandler
+from contextlib import asynccontextmanager
 
-# راه‌اندازی logger با rich
+# Setup logger with RichHandler for pretty logs
 basicConfig(
     level="INFO",
     format="%(message)s",
@@ -14,17 +15,26 @@ basicConfig(
 )
 logger: Logger = getLogger("mailmap")
 
-# ---- ایجاد session به صورت sync چون خود ClientSession async نیست ----
-
-def create_session(headers: Optional[Dict[str, str]] = None, user_agent: Optional[str] = None) -> ClientSession:
+@asynccontextmanager
+async def create_session(
+    headers: Optional[Dict[str, str]] = None,
+    user_agent: Optional[str] = None
+):
+    """
+    Async context manager to create and close aiohttp ClientSession.
+    Adds custom User-Agent header if provided.
+    """
     session_headers = headers.copy() if headers else {}
     if user_agent:
         session_headers["User-Agent"] = user_agent
     else:
         session_headers.setdefault("User-Agent", "MailmapScanner/1.0")
-    return ClientSession(headers=session_headers)
 
-# ---- توابع async ارسال درخواست GET و POST ----
+    session = ClientSession(headers=session_headers)
+    try:
+        yield session
+    finally:
+        await session.close()
 
 async def send_get_request(
     session: ClientSession,
@@ -33,12 +43,16 @@ async def send_get_request(
     headers: Optional[Dict[str, str]] = None,
     return_json: bool = True
 ) -> Optional[Union[dict, str]]:
+    """
+    Send an asynchronous GET request using the provided session.
+    Returns JSON or raw text based on return_json flag.
+    """
     try:
         timeout_obj = ClientTimeout(total=timeout)
         async with session.get(url, timeout=timeout_obj, headers=headers) as response:
             response.raise_for_status()
             if return_json:
-                return await response.json(content_type=None)  # content_type=None برای انعطاف بیشتر
+                return await response.json(content_type=None)  # content_type=None for flexible parsing
             else:
                 return await response.text()
     except TimeoutError:
@@ -59,6 +73,10 @@ async def send_post_request(
     json_payload: Optional[Dict] = None,
     return_json: bool = True
 ) -> Optional[Union[dict, str]]:
+    """
+    Send an asynchronous POST request using the provided session.
+    Returns JSON or raw text based on return_json flag.
+    """
     try:
         timeout_obj = ClientTimeout(total=timeout)
         async with session.post(url, timeout=timeout_obj, headers=headers, json=json_payload) as response:
@@ -77,17 +95,19 @@ async def send_post_request(
         logger.error(f"Unexpected error on POST request to {url}: {e}")
     return None
 
-# ---- لاگینگ بدون رنگ‌دهی دوباره چون RichHandler خودش این کار رو انجام میده ----
-
 def log_info(message: str) -> None:
+    """Log info message."""
     logger.info(message)
 
 def log_error(message: str) -> None:
+    """Log error message."""
     logger.error(message)
 
-# ---- توابع sync خواندن و نوشتن JSON ----
-
 def read_json_file(filepath: str) -> Optional[Any]:
+    """
+    Read JSON data from a file.
+    Returns parsed JSON or None on error.
+    """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return load(f)
@@ -100,6 +120,10 @@ def read_json_file(filepath: str) -> Optional[Any]:
     return None
 
 def write_json_file(filepath: str, data: Any) -> bool:
+    """
+    Write data as JSON to a file.
+    Returns True on success, False on failure.
+    """
     try:
         with open(filepath, "w", encoding="utf-8") as f:
             dump(data, f, indent=4, ensure_ascii=False)

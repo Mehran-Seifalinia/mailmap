@@ -112,6 +112,13 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
     Returns:
         None
     """
+
+    # Set default delay to 0 if not provided in settings
+    delay = settings.get('delay')
+    if delay is None:
+        delay = 0
+    settings['delay'] = delay
+
     try:
         mailman_exists = False
         details = {}

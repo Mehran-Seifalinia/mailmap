@@ -1,13 +1,17 @@
-from argparse import ArgumentParser
-from sys import exit, stderr
-from traceback import print_exc
+from argparse import ArgumentParser, Namespace
+from sys import exit
 from rich.console import Console
 
 from runner import run_scan
 
 console = Console()
 
-def parse_args():
+def parse_args() -> Namespace:
+    """
+    Parse command line arguments for the Mailmap Security Scanner CLI.
+    Returns:
+        Namespace: Parsed arguments object.
+    """
     parser = ArgumentParser(description="Mailman Security Scanner CLI")
     parser.add_argument('--target', required=True, help="Target URL for scanning")
     parser.add_argument('--paths', default='data/common_paths.json', help="Custom paths file")
@@ -24,18 +28,26 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
+    """
+    Main function to run the CLI tool.
+    Parses arguments and triggers the scan.
+    Handles user interrupt and exceptions.
+    """
     args = parse_args()
 
+    # Only add keys if they have meaningful values (non-None)
     settings = {
-        'proxy': args.proxy,
-        'user_agent': args.user_agent,
         'timeout': args.timeout,
         'delay': args.delay,
         'max_retries': args.max_retries,
         'verbose': args.verbose,
         'paths': args.paths
     }
+    if args.proxy:
+        settings['proxy'] = args.proxy
+    if args.user_agent:
+        settings['user_agent'] = args.user_agent
 
     try:
         run_scan(

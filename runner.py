@@ -1,26 +1,30 @@
 from core import detector, version, paths, cve_scanner
 from output import report_generator
-from colorama import Fore, Style, init
+from rich.console import Console
+from rich.traceback import install
 from json import load
+from sys import exit as sys_exit  # import exit with alias
 
-# Initialize colorama for Windows and terminals with auto-reset after each print
-init(autoreset=True)
+# Enable rich traceback globally for better error display
+install(show_locals=False)
+
+console = Console()
 
 def severity_color(severity: str) -> str:
     """
-    Return appropriate console color code based on severity level.
+    Return appropriate console style based on severity level.
 
     Args:
         severity (str): Severity level ('high', 'medium', 'low', etc.)
 
     Returns:
-        str: Colorama color code string.
+        str: Rich style string.
     """
     return {
-        'high': Fore.RED,
-        'medium': Fore.YELLOW,
-        'low': Fore.CYAN
-    }.get(severity.lower(), Fore.WHITE)
+        'high': "bold red",
+        'medium': "yellow",
+        'low': "cyan"
+    }.get(severity.lower(), "white")
 
 def load_common_paths(filepath: str) -> list:
     """
@@ -35,17 +39,37 @@ def load_common_paths(filepath: str) -> list:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = load(f)
-        # Combine paths for Mailman v2 and v3 into a single list
         paths_list = []
         for key in ["v2_paths", "v3_paths"]:
             if key in data:
                 paths_list.extend(data[key])
         return paths_list
     except Exception as e:
-        print(Fore.RED + f"[!] Failed to load common paths file: {e}")
+        console.print(f"[bold red][!] Failed to load common paths file:[/bold red] {e}")
         return []
 
-def run_scan(target: str, scan_part: str, settings: dict, output_file: str = None, output_format: str = "json") -> None:
+def handle_error(exc: Exception, verbose: bool = False) -> int:
+    """
+    Unified error handler to print errors and return appropriate exit code.
+
+    Args:
+        exc (Exception): The caught exception.
+        verbose (bool): Whether to print detailed traceback.
+
+    Returns:
+        int: Exit code (130 for KeyboardInterrupt, 1 for others).
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        console.print("[bold yellow]\n[!] Scan interrupted by user (KeyboardInterrupt).[/bold yellow]")
+        return 130
+    else:
+        console.print(f"[bold red][!] Unexpected error:[/bold red] {exc}")
+        if verbose:
+            console.print_exception()
+        return 1
+
+def run_scan(target: str, scan_part: str, settings: dict, output_file: str = None,
+             output_format: str = "json", verbose: bool = False) -> None:
     """
     Run the scan process on the specified target.
 
@@ -55,6 +79,7 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
         settings (dict): Settings and configuration for scanning (timeouts, proxies, etc.).
         output_file (str, optional): Path to save the report file. Defaults to None.
         output_format (str, optional): Output file format ('json', 'html', 'md', etc.). Defaults to 'json'.
+        verbose (bool, optional): Whether to print detailed errors and traceback. Defaults to False.
 
     Prints results to the console and saves a report if requested.
     """
@@ -71,43 +96,41 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
             mailman_exists = result.get("found", False)
             details = result
             if not mailman_exists:
-                print(Fore.RED + f"[!] Mailman not found on {target}.")
+                console.print(f"[bold red][!] Mailman not found on {target}.[/bold red]")
                 return  # Early exit if Mailman not found
-            print(Fore.GREEN + f"[+] Mailman detected: {details}")
+            console.print(f"[bold green][+] Mailman detected:[/bold green] {details}")
 
         # Step 2: Detect Mailman version
         if scan_part in ['version', 'full']:
             version_info = version.get_version(target, settings)
             if isinstance(version_info, dict):
                 if 'conflict' in version_info:
-                    print(Fore.YELLOW + f"[!] Multiple versions found: {version_info['versions']}")
-                # Ignore 'Generic' version label as it is not a valid version string
+                    console.print(f"[bold yellow][!] Multiple versions found:[/bold yellow] {version_info['versions']}")
                 elif version_info.get('version') and version_info.get('version').lower() != "generic":
-                    print(Fore.GREEN + f"[+] Mailman version: {version_info['version']}")
+                    console.print(f"[bold green][+] Mailman version:[/bold green] {version_info['version']}")
                 else:
-                    print(Fore.RED + "[!] No Mailman version detected.")
+                    console.print("[bold red][!] No Mailman version detected.[/bold red]")
             else:
-                print(Fore.RED + "[!] Invalid version info format received.")
+                console.print("[bold red][!] Invalid version info format received.[/bold red]")
 
         # Step 3: Scan sensitive paths if requested
         if scan_part in ['paths', 'full']:
             common_paths = load_common_paths(settings.get('paths', 'data/common_paths.json'))
             if not common_paths:
-                print(Fore.RED + "[!] No paths loaded, skipping path scan.")
+                console.print("[bold red][!] No paths loaded, skipping path scan.[/bold red]")
             else:
-                # Run path checks using the loaded paths
                 path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
                 for item in path_results:
                     severity = item.get('severity', 'unknown')
                     item_type = item.get('type', 'Unknown')
-                    print(severity_color(severity) + f"[!] Found: {item_type} - {item.get('path', 'N/A')} - Severity: {severity}")
+                    console.print(f"[{severity_color(severity)}][!] Found:[/] {item_type} - {item.get('path', 'N/A')} - Severity: {severity}")
 
         # Step 4: Scan known CVEs based on detected version
         if scan_part in ['cve', 'full']:
             version_str = version_info.get('version') if isinstance(version_info, dict) else None
             cve_results = cve_scanner.scan_cves(version_str, settings)
             for cve in cve_results:
-                print(severity_color(cve['severity']) + f"[!] CVE found: {cve['id']} - {cve['description']} - Severity: {cve['severity']}")
+                console.print(f"[{severity_color(cve['severity'])}][!] CVE found:[/] {cve['id']} - {cve['description']} - Severity: {cve['severity']}")
 
         # Step 5: Save the full report if an output file is specified
         if output_file:
@@ -119,11 +142,8 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
                 'cves': cve_results,
             }
             report_generator.save_report(output_file, output_format, report_data)
-            print(Fore.GREEN + f"[+] Report saved to {output_file}")
+            console.print(f"[bold green][+] Report saved to {output_file}[/bold green]")
 
-    except KeyboardInterrupt:
-        print(Fore.RED + "\n[!] Scan interrupted by user (Ctrl+C).")
     except Exception as e:
-        import traceback
-        print(Fore.RED + f"[!] Unexpected error: {e}")
-        print(Fore.RED + traceback.format_exc())
+        exit_code = handle_error(e, verbose)
+        sys_exit(exit_code)

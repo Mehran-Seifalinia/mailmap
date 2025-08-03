@@ -39,7 +39,10 @@ def load_fingerprints(filepath: str) -> List[Dict]:
 def is_valid_url(url: str) -> bool:
     """Check if URL has valid scheme and netloc."""
     parsed = urlparse(url)
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    valid = parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    if not valid:
+        logger.error("Invalid URL format. URL must start with http:// or https:// and include a domain.")
+    return valid
 
 def extract_version_from_text(text: str, pattern: re_compile) -> Optional[str]:
     """Extract version string using regex pattern from given text."""
@@ -60,8 +63,7 @@ def detect_version(
 
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
-        logger.error("Invalid URL format. Must include scheme (http or https) and domain.")
-        return {"error": "Invalid URL format. Must include scheme (http or https) and domain."}
+        return {"error": "Invalid URL format. URL must start with http:// or https:// and include a domain."}
 
     timeout = settings.get("timeout", 5)
     proxy = settings.get("proxy")
@@ -74,80 +76,84 @@ def detect_version(
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5790.170 Safari/537.36",
     ]
 
-    session = create_session(user_agent=user_agent)
-    if proxy:
-        session.proxies.update({"http": proxy, "https": proxy})
-
     found_versions: Set[str] = set()
     user_agent_index = 0
 
-    for fp in fingerprints:
-        method = fp.get("method")
-        location = fp.get("location")
-        pattern_str = fp.get("pattern")
-        version_label = fp.get("version")
+    with create_session(user_agent=user_agent) as session:
+        if proxy:
+            session.proxies.update({"http": proxy, "https": proxy})
 
-        pattern = re_compile(pattern_str, IGNORECASE) if pattern_str else None
+        for fp in fingerprints:
+            method = fp.get("method")
+            location = fp.get("location")
+            pattern_str = fp.get("pattern")
+            version_label = fp.get("version")
 
-        # Rotate User-Agent for each request to reduce chance of blocking
-        current_ua = user_agents[user_agent_index % len(user_agents)]
-        session.headers.update({"User-Agent": current_ua})
-        user_agent_index += 1
+            pattern = re_compile(pattern_str, IGNORECASE) if pattern_str else None
 
-        try:
-            if method == "url":
-                url_to_check = urljoin(base_url + "/", location.lstrip("/"))
-                response = session.get(url_to_check, timeout=timeout)
-                if response.status_code == 200:
-                    if not pattern:
-                        found_versions.add(version_label)
-                        logger.debug(f"Fingerprint matched by URL presence: {url_to_check} -> {version_label}")
-                    else:
-                        ver = extract_version_from_text(response.text, pattern)
-                        if ver:
-                            found_versions.add(ver)
-                            logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
+            # Rotate User-Agent for each request to reduce chance of blocking
+            current_ua = user_agents[user_agent_index % len(user_agents)]
+            session.headers.update({"User-Agent": current_ua})
+            user_agent_index += 1
 
-            elif method == "header":
-                urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
-                found_in_header = False
-                for u in urls_to_try:
-                    response = session.get(u, timeout=timeout)
-                    if not response.ok:
+            url_to_check = None  # امن‌سازی متغیر
+
+            try:
+                if method == "url":
+                    url_to_check = urljoin(base_url + "/", location.lstrip("/"))
+                    response = session.get(url_to_check, timeout=timeout)
+                    if response.status_code == 200:
+                        if not pattern:
+                            found_versions.add(version_label)
+                            logger.debug(f"Fingerprint matched by URL presence: {url_to_check} -> {version_label}")
+                        else:
+                            ver = extract_version_from_text(response.text, pattern)
+                            if ver:
+                                found_versions.add(ver)
+                                logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
+
+                elif method == "header":
+                    urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
+                    found_in_header = False
+                    for u in urls_to_try:
+                        url_to_check = u
+                        response = session.get(u, timeout=timeout)
+                        if not response.ok:
+                            continue
+                        header_val = response.headers.get(location)
+                        if header_val and pattern:
+                            ver = extract_version_from_text(header_val, pattern)
+                            if ver:
+                                found_versions.add(ver)
+                                found_in_header = True
+                                logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
+                                break
+                    if found_in_header:
                         continue
-                    header_val = response.headers.get(location)
-                    if header_val and pattern:
-                        ver = extract_version_from_text(header_val, pattern)
-                        if ver:
-                            found_versions.add(ver)
-                            found_in_header = True
-                            logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
-                            break
-                if found_in_header:
-                    continue
 
-            elif method == "body":
-                urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
-                for u in urls_to_try:
-                    response = session.get(u, timeout=timeout)
-                    content_type = response.headers.get("Content-Type", "").lower()
-                    if not response.ok or "text" not in content_type:
-                        continue
-                    content = response.text[:100_000]
-                    if pattern:
-                        ver = extract_version_from_text(content, pattern)
-                        if ver:
-                            found_versions.add(ver)
-                            logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
-                            break
+                elif method == "body":
+                    urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
+                    for u in urls_to_try:
+                        url_to_check = u
+                        response = session.get(u, timeout=timeout)
+                        content_type = response.headers.get("Content-Type", "").lower()
+                        if not response.ok or "text" not in content_type:
+                            continue
+                        content = response.text[:100_000]
+                        if pattern:
+                            ver = extract_version_from_text(content, pattern)
+                            if ver:
+                                found_versions.add(ver)
+                                logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
+                                break
 
-        except (Timeout, ConnectionError, RequestException, TooManyRedirects, HTTPError) as e:
-            logger.debug(f"Request error at {location} or {url_to_check if 'url_to_check' in locals() else 'N/A'}: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error during fingerprint scan: {e}")
+            except (Timeout, ConnectionError, RequestException, TooManyRedirects, HTTPError) as e:
+                logger.debug(f"Request error at {location} or {url_to_check if url_to_check else 'N/A'}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error during fingerprint scan: {e}")
 
-        # Delay between requests to avoid triggering protections
-        sleep(delay)
+            # Delay between requests to avoid triggering protections
+            sleep(delay)
 
     if not found_versions:
         logger.info("No Mailman version detected.")

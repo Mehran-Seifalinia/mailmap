@@ -21,6 +21,10 @@ if not logger.hasHandlers():
 # ------------- Utility Functions ------------- #
 
 def load_json_file(filepath: str) -> Optional[Dict]:
+    """
+    Load and parse a JSON file.
+    Returns None if any error occurs.
+    """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return load(f)
@@ -29,10 +33,17 @@ def load_json_file(filepath: str) -> Optional[Dict]:
     return None
 
 def is_valid_url(url: str) -> bool:
+    """
+    Check if the given URL has valid HTTP or HTTPS scheme and a netloc.
+    """
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[Pattern]]]:
+    """
+    Compile regex patterns for fingerprints.
+    If no pattern is provided, compiled_pattern is None.
+    """
     compiled = []
     for fp in fingerprints:
         pattern = fp.get("pattern", "")
@@ -75,12 +86,17 @@ def match_fingerprint(
     compiled_pattern: Optional[Pattern],
     verbose: bool = False
 ) -> Optional[Dict]:
+    """
+    Match a single fingerprint against the HTTP response.
+    Returns a dict with detection info if matched, else None.
+    """
     method = fingerprint.get("method", "").lower()
     location = fingerprint.get("location", "")
     version = fingerprint.get("version", "Unknown")
     pattern = fingerprint.get("pattern", "")
     is_status_ok = 200 <= status_code < 300
 
+    # Match based on URL presence or pattern
     if method == "url":
         if is_status_ok and ((not pattern and location in url) or (compiled_pattern and compiled_pattern.search(url))):
             if verbose:
@@ -92,6 +108,8 @@ def match_fingerprint(
                 "version": version,
                 "evidence": f"URL matched pattern: {pattern or location}"
             }
+
+    # Match based on headers
     elif method == "header" and compiled_pattern:
         # Headers keys may be case-insensitive; normalize to lower
         header_key = location.split(".", 1)[-1].lower()
@@ -106,33 +124,40 @@ def match_fingerprint(
             match_obj = compiled_pattern.search(header_value)
             if match_obj:
                 extracted_version = extract_version_from_match(match_obj)
-                if not extracted_version:
-                    extracted_version = version  # fallback to fingerprint version
-                if verbose:
-                    logger.info(f"Header matched at {url}: {header_key} = {header_value}")
-                return {
-                    "found": True,
-                    "url": url,
-                    "status_code": status_code,
-                    "version": extracted_version,
-                    "evidence": f"Header {header_key}: {header_value}"
-                }
+                # Avoid fallback to generic fingerprint version
+                if not extracted_version or extracted_version.lower() in ("generic", "version", ""):
+                    extracted_version = None
+                # If no valid extracted version, skip returning this fingerprint
+                if extracted_version:
+                    if verbose:
+                        logger.info(f"Header matched at {url}: {header_key} = {header_value}")
+                    return {
+                        "found": True,
+                        "url": url,
+                        "status_code": status_code,
+                        "version": extracted_version,
+                        "evidence": f"Header {header_key}: {header_value}"
+                    }
+
+    # Match based on body content
     elif method == "body" and compiled_pattern:
         if is_status_ok:
             match_obj = compiled_pattern.search(response_text[:100_000])
             if match_obj:
                 extracted_version = extract_version_from_match(match_obj)
-                if not extracted_version:
-                    extracted_version = version
-                if verbose:
-                    logger.info(f"Body matched at {url}")
-                return {
-                    "found": True,
-                    "url": url,
-                    "status_code": status_code,
-                    "version": extracted_version,
-                    "evidence": f"Body matched pattern: {pattern}"
-                }
+                # Avoid fallback to generic fingerprint version
+                if not extracted_version or extracted_version.lower() in ("generic", "version", ""):
+                    extracted_version = None
+                if extracted_version:
+                    if verbose:
+                        logger.info(f"Body matched at {url}")
+                    return {
+                        "found": True,
+                        "url": url,
+                        "status_code": status_code,
+                        "version": extracted_version,
+                        "evidence": f"Body matched pattern: {pattern}"
+                    }
 
     return None
 
@@ -147,6 +172,9 @@ async def fetch_and_check(
     verbose: bool,
     semaphore: Semaphore
 ) -> Optional[Dict]:
+    """
+    Fetch a URL and check it against compiled fingerprints.
+    """
     url = urljoin(base_url + "/", path.lstrip("/"))
     if verbose:
         logger.info(f"Checking URL: {url}")
@@ -185,6 +213,10 @@ async def detect_mailman_async(
     timeout: int = 5,
     verbose: bool = False
 ) -> Dict:
+    """
+    Main async function to detect Mailman by checking multiple paths concurrently.
+    Returns detection result dict.
+    """
     if not is_valid_url(base_url):
         return {"found": False, "error": "Invalid URL"}
 
@@ -205,6 +237,7 @@ async def detect_mailman_async(
             for task in done:
                 result = task.result()
                 if result:
+                    # Cancel remaining tasks once a match is found
                     for p in pending:
                         p.cancel()
                     try:
@@ -220,6 +253,9 @@ async def detect_mailman_async(
 # ------------- Wrapper Function ------------- #
 
 def check_mailman(base_url: str, settings: Dict) -> Dict:
+    """
+    Wrapper function to load necessary data files and run async detection.
+    """
     paths_file = settings.get("paths", "data/common_paths.json")
     fingerprints_file = settings.get("fingerprints", "data/fingerprints.json")
 
@@ -270,7 +306,7 @@ if __name__ == "__main__":
 
         console.print(result)
 
-        # Extra check for invalid version format
+        # Extra check for invalid version format to warn user
         version = result.get("version")
         if version is None or version.lower() in ("generic", "version", ""):
             console.print("[!] Invalid version info format received.", style="bold yellow")

@@ -3,9 +3,9 @@ from requests import Session, Timeout, ConnectionError, RequestException, TooMan
 from urllib.parse import urljoin, urlparse
 from time import sleep
 from random import choice
-from typing import List, Dict
+from typing import List, Dict, Union, Optional
 from urllib3 import disable_warnings, exceptions as urllib3_exceptions
-from re import compile as re_compile
+from re import compile as re_compile, IGNORECASE
 from sys import exit as sys_exit
 from signal import signal, SIGINT
 from colorama import Fore, Style, init
@@ -16,7 +16,6 @@ init(autoreset=True)
 # Disable SSL warnings (since verify=False is used)
 disable_warnings(urllib3_exceptions.InsecureRequestWarning)
 
-# User agents for header rotation
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/102.0",
@@ -29,21 +28,44 @@ REQUEST_DELAY = 1  # seconds delay between requests
 # Precompiled pattern for Mailman-related content detection (case-insensitive)
 MAILMAN_PATTERN = re_compile(
     r"(mailman|gnu|listinfo|hyperkitty|postorius|mailing list|admin)",
-    flags=2  # re.IGNORECASE
+    flags=IGNORECASE
 )
 
 def handle_sigint(signum, frame):
+    """Handle Ctrl+C (SIGINT) signal to exit gracefully."""
     print(f"\n{Fore.RED}[!] Interrupted by user (Ctrl+C). Exiting...{Style.RESET_ALL}")
     sys_exit(0)
 
-# Register signal handler for Ctrl+C
 signal(SIGINT, handle_sigint)
 
+def ensure_scheme(url: str) -> str:
+    """
+    Ensure the URL has an HTTP or HTTPS scheme.
+    If missing, add 'http://' by default.
+    """
+    parsed = urlparse(url)
+    if not parsed.scheme:
+        return "http://" + url
+    return url
+
 def is_valid_url(url: str) -> bool:
+    """
+    Validate if the given URL has valid scheme and netloc.
+    """
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 def load_common_paths(filepath: str, version: str = "v2") -> List[Dict]:
+    """
+    Load common Mailman paths from a JSON file for the specified version.
+
+    Args:
+        filepath (str): Path to the JSON file.
+        version (str): Mailman version ('v2' or 'v3').
+
+    Returns:
+        List[Dict]: List of path dictionaries.
+    """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = load(f)
@@ -61,8 +83,27 @@ def load_common_paths(filepath: str, version: str = "v2") -> List[Dict]:
         print(f"{Fore.RED}[!] Unexpected error loading common paths file: {e}{Style.RESET_ALL}")
         return []
 
-def check_paths(base_url: str, paths: List[Dict], timeout: int = 5) -> List[Dict]:
+def check_paths(
+    base_url: str,
+    paths: List[Dict],
+    timeout: int = 5,
+    request_delay: int = REQUEST_DELAY
+) -> Union[List[Dict], List[Dict[str, str]]]:
+    """
+    Check accessibility of common Mailman paths under the given base URL.
+
+    Args:
+        base_url (str): The base URL to scan.
+        paths (List[Dict]): List of paths to check.
+        timeout (int): Request timeout in seconds.
+        request_delay (int): Delay between requests in seconds.
+
+    Returns:
+        List[Dict]: List of accessible paths with details or error dictionary.
+    """
     base_url = base_url.rstrip("/")
+    base_url = ensure_scheme(base_url)
+    
     if not is_valid_url(base_url):
         return [{"error": "Invalid URL format. Must include scheme (http or https) and domain."}]
 
@@ -80,13 +121,29 @@ def check_paths(base_url: str, paths: List[Dict], timeout: int = 5) -> List[Dict
 
         try:
             response = session.get(full_url, timeout=timeout, verify=False)
-            if response.status_code == 200 and MAILMAN_PATTERN.search(response.text):
+            status = response.status_code
+
+            # Accept 200 OK and 3xx redirects as accessible for scanning purposes
+            if status == 200:
+                content_matches = MAILMAN_PATTERN.search(response.text)
+                if content_matches:
+                    accessible_paths.append({
+                        "path": path,
+                        "status_code": status,
+                        "description": item.get("description", ""),
+                        "access_level": item.get("access_level", "unknown")
+                    })
+            elif 300 <= status < 400:
+                print(f"{Fore.BLUE}[i] Redirect detected at {full_url} - HTTP {status}{Style.RESET_ALL}")
                 accessible_paths.append({
                     "path": path,
-                    "status_code": response.status_code,
-                    "description": item.get("description", ""),
+                    "status_code": status,
+                    "description": item.get("description", "") + " (Redirect)",
                     "access_level": item.get("access_level", "unknown")
                 })
+            else:
+                print(f"{Fore.YELLOW}[!] Non-200/3xx status at {full_url}: HTTP {status}{Style.RESET_ALL}")
+
         except (Timeout, ConnectionError) as e:
             print(f"{Fore.YELLOW}[!] Connection error at {full_url}: {e}{Style.RESET_ALL}")
         except (TooManyRedirects, HTTPError, RequestException) as e:
@@ -94,15 +151,17 @@ def check_paths(base_url: str, paths: List[Dict], timeout: int = 5) -> List[Dict
         except Exception as e:
             print(f"{Fore.RED}[!] Unexpected error at {full_url}: {e}{Style.RESET_ALL}")
 
-        sleep(REQUEST_DELAY)
+        sleep(request_delay)
 
     return accessible_paths
 
-if __name__ == "__main__":
+def main():
+    """Main interactive function to run the path check."""
     try:
         target = input("Enter target base URL (e.g., https://example.com): ").strip()
-        version = input("Enter Mailman version to scan (v2 or v3): ").strip().lower()
+        target = ensure_scheme(target)
 
+        version = input("Enter Mailman version to scan (v2 or v3): ").strip().lower()
         if version not in ["v2", "v3"]:
             print(f"{Fore.YELLOW}[!] Invalid version specified. Defaulting to v2.{Style.RESET_ALL}")
             version = "v2"
@@ -128,3 +187,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"{Fore.RED}[!] Fatal error: {e}{Style.RESET_ALL}")
         sys_exit(1)
+
+if __name__ == "__main__":
+    main()

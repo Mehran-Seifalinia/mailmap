@@ -4,8 +4,9 @@ from packaging.specifiers import SpecifierSet, InvalidSpecifier
 from re import search, IGNORECASE
 from logging import getLogger
 from colorama import init as colorama_init, Fore, Style
-from asyncio import run, gather
-from aiohttp import ClientSession
+from asyncio import gather
+from aiohttp import ClientSession, ClientConnectorError
+from urllib.parse import urljoin
 
 from core.utils import read_json_file, log_error
 
@@ -61,7 +62,7 @@ class CVEScanner:
         payload: Optional[Dict] = None,
         evidence_regex: Optional[str] = None,
         timeout: int = 10,
-    ) -> Tuple[Optional[bool], str]:
+    ) -> Tuple[bool, str]:
         try:
             headers = headers or {}
             payload = payload or {}
@@ -76,9 +77,18 @@ class CVEScanner:
             ) as response:
 
                 if response.status != 200:
-                    return False, f"Unexpected status code: {response.status}"
+                    try:
+                        text = await response.text()
+                        snippet = text[:100]
+                    except Exception:
+                        snippet = "Unable to read response body"
+                    return False, f"Unexpected status code {response.status}: {snippet}"
 
-                text = await response.text()
+                try:
+                    text = await response.text()
+                except Exception:
+                    return False, "Failed to decode response as text"
+
                 if evidence_regex:
                     if search(evidence_regex, text, flags=IGNORECASE):
                         return True, f"Evidence matched: {evidence_regex}"
@@ -126,7 +136,16 @@ class CVEScanner:
 
         severity = get_cvss_severity(cvss)
 
-        if detected_version and affected_versions_str:
+        if detected_version:
+            if not affected_versions:
+                return {
+                    "id": cve_id,
+                    "description": description,
+                    "cvss": cvss,
+                    "severity": severity,
+                    "status": "skipped",
+                    "reason": "No affected versions specified",
+                }
             try:
                 ver = Version(detected_version)
                 spec_set = SpecifierSet(affected_versions_str)
@@ -140,13 +159,14 @@ class CVEScanner:
                         "reason": "Version not affected",
                     }
             except (InvalidVersion, InvalidSpecifier) as e:
+                log_error(f"Version check failed for CVE {cve_id}: {e}")
                 return {
                     "id": cve_id,
                     "description": description,
                     "cvss": cvss,
                     "severity": severity,
                     "status": "skipped",
-                    "reason": str(e),
+                    "reason": f"Invalid version specifier: {e}",
                 }
 
         method = test_info.get("method", "GET")
@@ -166,12 +186,7 @@ class CVEScanner:
                     "status": "not_tested",
                     "reason": "Invalid base URL",
                 }
-            if base_url.endswith("/") and path.startswith("/"):
-                url = base_url[:-1] + path
-            elif not base_url.endswith("/") and not path.startswith("/"):
-                url = base_url + "/" + path
-            else:
-                url = base_url + path
+            url = urljoin(base_url, path)
 
         if url:
             test_passed, reason = await self.perform_test(session, method, url, headers, payload, evidence_regex, timeout)
@@ -180,7 +195,7 @@ class CVEScanner:
                 "description": description,
                 "cvss": cvss,
                 "severity": severity,
-                "status": "vulnerable" if test_passed else "not_vulnerable" if test_passed is False else "error",
+                "status": "vulnerable" if test_passed else "not_vulnerable",
                 "reason": reason,
             }
         else:
@@ -210,6 +225,10 @@ class CVEScanner:
         except KeyboardInterrupt:
             print_error("Scan interrupted by user (Ctrl+C). Exiting gracefully.")
             raise SystemExit(1)
+        except ClientConnectorError as e:
+            print_error(f"Network connection error: {e}")
+            log_error(f"Network connection error: {e}")
+            raise CVEScannerException("Unable to connect to target.")
         except Exception as e:
             print_error(f"Unexpected error during scan: {e}")
             log_error(f"Unexpected error during scan: {e}")

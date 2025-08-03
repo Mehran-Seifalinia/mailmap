@@ -1,6 +1,7 @@
 from core import detector, version, paths, cve_scanner
 from output import report_generator
 from colorama import Fore, Style, init
+from json import load
 
 # Initialize colorama for Windows and terminals
 init(autoreset=True)
@@ -12,6 +13,21 @@ def severity_color(severity: str) -> str:
         'medium': Fore.YELLOW,
         'low': Fore.CYAN
     }.get(severity.lower(), Fore.WHITE)
+
+def load_common_paths(filepath: str) -> list:
+    """Load common paths from JSON file."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = load(f)
+        # Combine v2_paths and v3_paths into a single list
+        paths_list = []
+        for key in ["v2_paths", "v3_paths"]:
+            if key in data:
+                paths_list.extend(data[key])
+        return paths_list
+    except Exception as e:
+        print(Fore.RED + f"[!] Failed to load common paths file: {e}")
+        return []
 
 def run_scan(target: str, scan_part: str, settings: dict, output_file: str = None, output_format: str = "json") -> None:
     """
@@ -58,10 +74,17 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
 
         # Step 3: Scan sensitive paths
         if scan_part in ['paths', 'full']:
-            # Assume settings['paths'] contains list of paths; if not, an empty list is used
-            path_results = paths.scan_paths(target, settings.get('paths', []), settings)
-            for item in path_results:
-                print(severity_color(item['severity']) + f"[!] Found: {item['type']} - {item['path']} - Severity: {item['severity']}")
+            # Load common paths from JSON file
+            common_paths = load_common_paths(settings.get('common_paths_file', 'data/common_paths.json'))
+            if not common_paths:
+                print(Fore.RED + "[!] No paths loaded, skipping path scan.")
+            else:
+                # Call the correct function 'check_paths' from paths module
+                path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
+                for item in path_results:
+                    severity = item.get('severity', 'unknown')
+                    item_type = item.get('type', 'Unknown')
+                    print(severity_color(severity) + f"[!] Found: {item_type} - {item.get('path', 'N/A')} - Severity: {severity}")
 
         # Step 4: Scan CVEs
         if scan_part in ['cve', 'full']:

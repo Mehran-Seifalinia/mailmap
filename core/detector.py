@@ -1,14 +1,13 @@
-from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError
-from json import load, JSONDecodeError
-from logging import getLogger, INFO
+from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError, Semaphore, TimeoutError, wait_for
+from json import load
+from logging import getLogger, INFO, basicConfig
 from re import compile as re_compile, IGNORECASE, Pattern
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientTimeout
 from rich.console import Console
 from rich.logging import RichHandler
-from logging import basicConfig
 
 console = Console()
 logger = getLogger(__name__)
@@ -19,6 +18,7 @@ if not logger.hasHandlers():
         handlers=[RichHandler(console=console)]
     )
 
+# ------------- Utility Functions ------------- #
 
 def load_json_file(filepath: str) -> Optional[Dict]:
     try:
@@ -28,11 +28,9 @@ def load_json_file(filepath: str) -> Optional[Dict]:
         logger.error(f"Failed to load JSON file {filepath}: {e}")
     return None
 
-
 def is_valid_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
-
 
 def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[Pattern]]]:
     compiled = []
@@ -41,7 +39,6 @@ def compile_fingerprints(fingerprints: List[Dict]) -> List[Tuple[Dict, Optional[
         compiled_pattern = re_compile(pattern, IGNORECASE) if pattern else None
         compiled.append((fp, compiled_pattern))
     return compiled
-
 
 def match_fingerprint(
     response_text: str,
@@ -56,7 +53,6 @@ def match_fingerprint(
     location = fingerprint.get("location", "")
     version = fingerprint.get("version", "Unknown")
     pattern = fingerprint.get("pattern", "")
-
     is_status_ok = 200 <= status_code < 300
 
     if method == "url":
@@ -71,7 +67,7 @@ def match_fingerprint(
                 "evidence": f"URL matched pattern: {pattern or location}"
             }
     elif method == "header" and compiled_pattern:
-        header_key = location.split(".", 1)[1] if location.startswith("headers.") else location
+        header_key = location.split(".", 1)[-1]
         header_value = response_headers.get(header_key, "")
         if header_value and compiled_pattern.search(header_value):
             if verbose:
@@ -97,6 +93,7 @@ def match_fingerprint(
 
     return None
 
+# ------------- Main Async Logic ------------- #
 
 async def fetch_and_check(
     session: ClientSession,
@@ -104,31 +101,33 @@ async def fetch_and_check(
     path: str,
     compiled_fingerprints: List[Tuple[Dict, Optional[Pattern]]],
     timeout: int,
-    verbose: bool
+    verbose: bool,
+    semaphore: Semaphore
 ) -> Optional[Dict]:
     url = urljoin(base_url + "/", path.lstrip("/"))
     if verbose:
         logger.info(f"Checking URL: {url}")
 
     try:
-        async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
-            if verbose:
-                logger.info(f"Got status {resp.status} from {url}")
-            text = await resp.text()
-            headers = dict(resp.headers)
-            for fp, compiled_pattern in compiled_fingerprints:
-                result = match_fingerprint(text, headers, url, resp.status, fp, compiled_pattern, verbose)
-                if result:
-                    if verbose:
-                        logger.info(f"Fingerprint matched at {url}: {result['evidence']}")
-                    return result
+        async with semaphore:
+            async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
+                if verbose:
+                    logger.info(f"Got status {resp.status} from {url}")
+                text = await resp.text()
+                headers = dict(resp.headers)
+
+                for fp, compiled_pattern in compiled_fingerprints:
+                    result = match_fingerprint(text, headers, url, resp.status, fp, compiled_pattern, verbose)
+                    if result:
+                        if verbose:
+                            logger.info(f"Fingerprint matched at {url}: {result['evidence']}")
+                        return result
     except CancelledError:
         pass
     except Exception as e:
         if verbose:
             logger.warning(f"Error fetching {url}: {e}")
     return None
-
 
 async def detect_mailman_async(
     base_url: str,
@@ -142,9 +141,14 @@ async def detect_mailman_async(
 
     compiled_fps = compile_fingerprints(fingerprints)
     headers = {"User-Agent": "MailmapScanner/2.0"}
+    timeout_obj = ClientTimeout(total=timeout)
+    semaphore = Semaphore(10)  # Limit concurrent requests
 
-    async with ClientSession(headers=headers) as session:
-        tasks = [create_task(fetch_and_check(session, base_url, path, compiled_fps, timeout, verbose)) for path in paths]
+    async with ClientSession(headers=headers, timeout=timeout_obj) as session:
+        tasks = [
+            create_task(fetch_and_check(session, base_url, path, compiled_fps, timeout, verbose, semaphore))
+            for path in paths
+        ]
 
         while tasks:
             done, pending = await wait(tasks, return_when=FIRST_COMPLETED)
@@ -154,15 +158,19 @@ async def detect_mailman_async(
                 if result:
                     for p in pending:
                         p.cancel()
-                    await gather(*pending, return_exceptions=True)
+                    try:
+                        await wait_for(gather(*pending, return_exceptions=True), timeout=3)
+                    except TimeoutError:
+                        logger.warning("Timeout while cancelling pending tasks")
                     return result
 
             tasks = list(pending)
 
     return {"found": False, "reason": "No known Mailman path responded with recognizable content."}
 
+# ------------- Wrapper Function ------------- #
 
-def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
+def check_mailman(base_url: str, settings: Dict) -> Dict:
     paths_file = settings.get("paths", "data/common_paths.json")
     fingerprints_file = settings.get("fingerprints", "data/fingerprints.json")
 
@@ -170,7 +178,7 @@ def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
     fingerprints = load_json_file(fingerprints_file)
 
     if common_paths_data is None or fingerprints is None:
-        return False, {"error": "Failed to load required data files."}
+        return {"found": False, "error": "Failed to load required data files."}
 
     common_paths = []
     for key in ["v2_paths", "v3_paths"]:
@@ -184,8 +192,9 @@ def check_mailman(base_url: str, settings: Dict) -> Tuple[bool, Dict]:
         verbose=settings.get("verbose", False)
     ))
 
-    return result.get("found", False), result
+    return result
 
+# ------------- CLI ------------- #
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
@@ -204,8 +213,8 @@ if __name__ == "__main__":
     }
 
     try:
-        found, result = check_mailman(args.target, settings)
-        if found:
+        result = check_mailman(args.target, settings)
+        if result.get("found"):
             console.print("[+] Mailman detected", style="bold green")
         else:
             console.print("[!] Mailman not found", style="bold red")

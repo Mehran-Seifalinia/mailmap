@@ -56,7 +56,7 @@ def match_fingerprint(
     is_status_ok = 200 <= status_code < 300
 
     if method == "url":
-        if (not pattern and location in url) or (compiled_pattern and compiled_pattern.search(url)):
+        if is_status_ok and ((not pattern and location in url) or (compiled_pattern and compiled_pattern.search(url))):
             if verbose:
                 logger.info(f"URL matched: {url}")
             return {
@@ -113,6 +113,12 @@ async def fetch_and_check(
             async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
                 if verbose:
                     logger.info(f"Got status {resp.status} from {url}")
+
+                if not (200 <= resp.status < 300):
+                    if verbose:
+                        logger.info(f"Skipping {url} due to non-2xx status code")
+                    return None
+
                 text = await resp.text()
                 headers = dict(resp.headers)
 

@@ -1,19 +1,13 @@
-from re import compile as re_compile, IGNORECASE
+from re import compile as re_compile, Pattern, IGNORECASE
 from urllib.parse import urljoin, urlparse
-from time import sleep
 from typing import Optional, Dict, Set, List, Union
 from json import load as json_load
-from logging import getLogger, basicConfig, INFO, DEBUG
+from logging import getLogger, basicConfig, INFO
 from argparse import ArgumentParser
-from sys import exit as sys_exit, stderr
-from requests.exceptions import (
-    Timeout,
-    ConnectionError,
-    RequestException,
-    TooManyRedirects,
-    HTTPError
-)
-from core.utils import create_session
+from sys import exit as sys_exit
+from asyncio import sleep, run
+from aiohttp import ClientTimeout, ClientResponseError
+from core.utils import create_session  # async context manager returning aiohttp.ClientSession
 from rich.console import Console
 from rich.theme import Theme
 
@@ -44,7 +38,7 @@ def is_valid_url(url: str) -> bool:
         logger.error("Invalid URL format. URL must start with http:// or https:// and include a domain.")
     return valid
 
-def extract_version_from_text(text: str, pattern: re_compile) -> Optional[str]:
+def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
     """Extract version string using regex pattern from given text."""
     match = pattern.search(text)
     if match:
@@ -54,12 +48,12 @@ def extract_version_from_text(text: str, pattern: re_compile) -> Optional[str]:
             return match.group(0).strip()
     return None
 
-def detect_version(
+async def detect_version(
     base_url: str,
     settings: Dict[str, Union[str, int, float]],
     fingerprints: List[Dict]
 ) -> Dict[str, Union[str, bool, List[str], None]]:
-    """Detect Mailman version by applying fingerprints on target URLs/headers/body."""
+    """Detect Mailman version by applying fingerprints on target URLs/headers/body asynchronously."""
 
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
@@ -79,9 +73,7 @@ def detect_version(
     found_versions: Set[str] = set()
     user_agent_index = 0
 
-    with create_session(user_agent=user_agent) as session:
-        if proxy:
-            session.proxies.update({"http": proxy, "https": proxy})
+    async with create_session(user_agent=user_agent, proxy=proxy, timeout=timeout) as session:
 
         for fp in fingerprints:
             method = fp.get("method")
@@ -91,43 +83,44 @@ def detect_version(
 
             pattern = re_compile(pattern_str, IGNORECASE) if pattern_str else None
 
-            # Rotate User-Agent for each request to reduce chance of blocking
+            # Rotate User-Agent for each request
             current_ua = user_agents[user_agent_index % len(user_agents)]
             session.headers.update({"User-Agent": current_ua})
             user_agent_index += 1
 
-            url_to_check = None  # امن‌سازی متغیر
+            url_to_check = None
 
             try:
                 if method == "url":
                     url_to_check = urljoin(base_url + "/", location.lstrip("/"))
-                    response = session.get(url_to_check, timeout=timeout)
-                    if response.status_code == 200:
-                        if not pattern:
-                            found_versions.add(version_label)
-                            logger.debug(f"Fingerprint matched by URL presence: {url_to_check} -> {version_label}")
-                        else:
-                            ver = extract_version_from_text(response.text, pattern)
-                            if ver:
-                                found_versions.add(ver)
-                                logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
+                    async with session.get(url_to_check) as response:
+                        if response.status == 200:
+                            text = await response.text()
+                            if not pattern:
+                                found_versions.add(version_label)
+                                logger.debug(f"Fingerprint matched by URL presence: {url_to_check} -> {version_label}")
+                            else:
+                                ver = extract_version_from_text(text, pattern)
+                                if ver:
+                                    found_versions.add(ver)
+                                    logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
 
                 elif method == "header":
                     urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
                     found_in_header = False
                     for u in urls_to_try:
                         url_to_check = u
-                        response = session.get(u, timeout=timeout)
-                        if not response.ok:
-                            continue
-                        header_val = response.headers.get(location)
-                        if header_val and pattern:
-                            ver = extract_version_from_text(header_val, pattern)
-                            if ver:
-                                found_versions.add(ver)
-                                found_in_header = True
-                                logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
-                                break
+                        async with session.get(u) as response:
+                            if response.status < 200 or response.status >= 300:
+                                continue
+                            header_val = response.headers.get(location)
+                            if header_val and pattern:
+                                ver = extract_version_from_text(header_val, pattern)
+                                if ver:
+                                    found_versions.add(ver)
+                                    found_in_header = True
+                                    logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
+                                    break
                     if found_in_header:
                         continue
 
@@ -135,25 +128,25 @@ def detect_version(
                     urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
                     for u in urls_to_try:
                         url_to_check = u
-                        response = session.get(u, timeout=timeout)
-                        content_type = response.headers.get("Content-Type", "").lower()
-                        if not response.ok or "text" not in content_type:
-                            continue
-                        content = response.text[:100_000]
-                        if pattern:
-                            ver = extract_version_from_text(content, pattern)
-                            if ver:
-                                found_versions.add(ver)
-                                logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
-                                break
+                        async with session.get(u) as response:
+                            if response.status < 200 or response.status >= 300:
+                                continue
+                            content_type = response.headers.get("Content-Type", "").lower()
+                            if "text" not in content_type:
+                                continue
+                            content = await response.text()
+                            content = content[:100_000]
+                            if pattern:
+                                ver = extract_version_from_text(content, pattern)
+                                if ver:
+                                    found_versions.add(ver)
+                                    logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
+                                    break
 
-            except (Timeout, ConnectionError, RequestException, TooManyRedirects, HTTPError) as e:
-                logger.debug(f"Request error at {location} or {url_to_check if url_to_check else 'N/A'}: {e}")
             except Exception as e:
-                logger.error(f"Unexpected error during fingerprint scan: {e}")
+                logger.error(f"Unexpected error during fingerprint scan at {url_to_check if url_to_check else 'N/A'}: {e}")
 
-            # Delay between requests to avoid triggering protections
-            sleep(delay)
+            await sleep(delay)
 
     if not found_versions:
         logger.info("No Mailman version detected.")
@@ -163,25 +156,27 @@ def detect_version(
         logger.info(f"Detected Mailman version: {ver}")
         return {"version": ver}
 
-    # Multiple conflicting versions found
     logger.warning(f"Version conflict detected. Found versions: {found_versions}")
     return {"conflict": True, "versions": list(found_versions)}
 
-def get_version(
+async def get_version(
     base_url: str,
     settings: Dict[str, Union[str, int, float]],
     fingerprint_file: str = "data/fingerprints.json"
 ) -> Dict:
-    """Load fingerprints and run version detection."""
+    """Load fingerprints and run version detection asynchronously."""
     fingerprints = load_fingerprints(fingerprint_file)
     if not fingerprints:
         logger.error("No fingerprints loaded, aborting version detection.")
         return {"error": "No fingerprints loaded."}
-    return detect_version(base_url, settings, fingerprints)
+    return await detect_version(base_url, settings, fingerprints)
 
 
-# CLI Support
 if __name__ == "__main__":
+    from logging import basicConfig
+    from sys import exit as sys_exit
+    from asyncio import run
+
     basicConfig(level=INFO, format='[%(levelname)s] %(message)s')
 
     parser = ArgumentParser(description="Mailman Version Detector with Fingerprints")
@@ -201,22 +196,25 @@ if __name__ == "__main__":
         "delay": args.delay,
     }
 
-    try:
-        result = get_version(args.target, settings, args.fingerprints)
-    except KeyboardInterrupt:
-        console.print("\n[error]Process interrupted by user (Ctrl+C). Exiting...[/error]")
-        sys_exit(130)  # 128 + 2 for SIGINT
+    async def main():
+        try:
+            result = await get_version(args.target, settings, args.fingerprints)
+        except KeyboardInterrupt:
+            console.print("\n[error]Process interrupted by user (Ctrl+C). Exiting...[/error]")
+            sys_exit(130)  # 128 + 2 for SIGINT
 
-    if "error" in result:
-        console.print(f"[error]Error: {result['error']}[/error]")
-        sys_exit(1)
+        if "error" in result:
+            console.print(f"[error]Error: {result['error']}[/error]")
+            sys_exit(1)
 
-    if result.get("conflict"):
-        console.print(f"[warning]Version conflict detected! Found versions: {', '.join(result['versions'])}[/warning]")
-        sys_exit(2)
-    elif result.get("version"):
-        console.print(f"[success]Detected Mailman version: {result['version']}[/success]")
-        sys_exit(0)
-    else:
-        console.print("[info]No Mailman version detected.[/info]")
-        sys_exit(3)
+        if result.get("conflict"):
+            console.print(f"[warning]Version conflict detected! Found versions: {', '.join(result['versions'])}[/warning]")
+            sys_exit(2)
+        elif result.get("version"):
+            console.print(f"[success]Detected Mailman version: {result['version']}[/success]")
+            sys_exit(0)
+        else:
+            console.print("[info]No Mailman version detected.[/info]")
+            sys_exit(3)
+
+    run(main())

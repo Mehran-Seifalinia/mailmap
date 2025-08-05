@@ -1,18 +1,19 @@
 from argparse import ArgumentParser, Namespace
-from sys import exit as sys_exit  # import exit with alias for consistency
+from sys import exit as sys_exit
 from rich.console import Console
-
+from asyncio import run
 from runner import run_scan
 
 console = Console()
 
 def parse_args() -> Namespace:
     """
-    Parse command line arguments for the Mailmap Security Scanner CLI.
+    Parse CLI arguments for the Mailmap scanner.
+    
     Returns:
-        Namespace: Parsed arguments object.
+        Namespace: Parsed arguments
     """
-    parser = ArgumentParser(description="Mailman Security Scanner CLI")
+    parser = ArgumentParser(description="Mailmap Security Scanner CLI")
     parser.add_argument('--target', required=True, help="Target URL for scanning")
     parser.add_argument('--paths', default='data/common_paths.json', help="Custom paths file")
     parser.add_argument('--proxy', help="Proxy URL (e.g. http://user:pass@host:port)")
@@ -27,21 +28,20 @@ def parse_args() -> Namespace:
     parser.add_argument('--version', action='version', version='Mailmap Scanner 1.0')
     return parser.parse_args()
 
-
 def main() -> None:
     """
-    Main function to run the CLI tool.
-    Parses arguments and triggers the scan.
-    Handles user interrupt and exceptions.
+    Main entry point to run the async scan from a synchronous context.
+    Uses asyncio.run to execute async run_scan.
     """
     args = parse_args()
 
+    # Prepare settings dict from parsed args
     settings = {
         'timeout': args.timeout,
         'delay': args.delay,
         'max_retries': args.max_retries,
         'verbose': args.verbose,
-        'paths': args.paths
+        'paths': args.paths,
     }
     if args.proxy:
         settings['proxy'] = args.proxy
@@ -49,13 +49,16 @@ def main() -> None:
         settings['user_agent'] = args.user_agent
 
     try:
-        run_scan(
-            target=args.target,
-            scan_part=args.scan_part,
-            settings=settings,
-            output_file=args.output,
-            output_format=args.format,
-            verbose=args.verbose  # pass verbose to runner
+        # Run the async run_scan function via asyncio.run
+        run(
+            run_scan(
+                target=args.target,
+                scan_part=args.scan_part,
+                settings=settings,
+                output_file=args.output,
+                output_format=args.format,
+                verbose=args.verbose
+            )
         )
     except KeyboardInterrupt:
         console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
@@ -65,7 +68,6 @@ def main() -> None:
         if args.verbose:
             console.print_exception()
         sys_exit(1)
-
 
 if __name__ == "__main__":
     main()

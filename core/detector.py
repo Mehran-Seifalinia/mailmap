@@ -1,4 +1,4 @@
-from asyncio import run, wait, create_task, gather, FIRST_COMPLETED, CancelledError, Semaphore, TimeoutError, wait_for
+from asyncio import create_task, wait, FIRST_COMPLETED, Semaphore, TimeoutError, wait_for, run
 from json import load
 from logging import getLogger, INFO, basicConfig
 from re import compile as re_compile, IGNORECASE, Pattern, Match, search
@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlparse
 from aiohttp import ClientSession, ClientTimeout
 from rich.console import Console
 from rich.logging import RichHandler
+from argparse import ArgumentParser
 
 console = Console()
 logger = getLogger(__name__)
@@ -203,8 +204,6 @@ async def fetch_and_check(
                         if verbose:
                             logger.info(f"Fingerprint matched at {url}: {result['evidence']}")
                         return result
-    except CancelledError:
-        pass
     except Exception as e:
         if verbose:
             logger.warning(f"Error fetching {url}: {e}")
@@ -246,7 +245,7 @@ async def detect_mailman_async(
                     for p in pending:
                         p.cancel()
                     try:
-                        await wait_for(gather(*pending, return_exceptions=True), timeout=3)
+                        await wait_for(run(gather(*pending, return_exceptions=True)), timeout=3)
                     except TimeoutError:
                         logger.warning("Timeout while cancelling pending tasks")
                     return result
@@ -255,7 +254,7 @@ async def detect_mailman_async(
 
     return {"found": False, "reason": "No known Mailman path responded with recognizable content."}
 
-# ------------- Wrapper Function ------------- #
+# ------------- Synchronous Wrapper ------------- #
 
 def check_mailman(base_url: str, settings: Dict) -> Dict:
     """
@@ -275,6 +274,7 @@ def check_mailman(base_url: str, settings: Dict) -> Dict:
     for key in ["v2_paths", "v3_paths"]:
         common_paths.extend([item["path"] for item in common_paths_data.get(key, [])])
 
+    # Run the async detection function synchronously using asyncio.run
     result = run(detect_mailman_async(
         base_url,
         common_paths,
@@ -288,8 +288,6 @@ def check_mailman(base_url: str, settings: Dict) -> Dict:
 # ------------- CLI Entry Point ------------- #
 
 if __name__ == "__main__":
-    from argparse import ArgumentParser
-
     parser = ArgumentParser(description="Mailmap - Mailman Detection Tool")
     parser.add_argument("--target", required=True, help="Target base URL, e.g. https://example.com")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
@@ -310,7 +308,7 @@ if __name__ == "__main__":
         else:
             console.print(f"[!] Mailman not found: {result}", style="bold red")
 
-        # Extra check for invalid version format
+        # Additional check for invalid version format
         version = result.get("version")
         if version is None or version.lower() in ("generic", "version", ""):
             console.print("[!] Invalid version info format received.", style="bold yellow")

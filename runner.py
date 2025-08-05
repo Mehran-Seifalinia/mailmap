@@ -1,3 +1,4 @@
+from asyncio import run
 from core import detector, version, paths, cve_scanner
 from output import report_generator
 from rich.console import Console
@@ -26,7 +27,6 @@ def severity_color(severity: str) -> str:
         'low': "cyan"
     }.get(severity.lower(), "white")
 
-
 def is_valid_version(version: str) -> bool:
     """
     Validate Mailman version string to filter out generic or invalid values.
@@ -41,7 +41,6 @@ def is_valid_version(version: str) -> bool:
         return False
     invalid_versions = {"generic", "version", "unknown", "none", ""}
     return version.lower() not in invalid_versions
-
 
 def load_common_paths(filepath: str) -> list:
     """
@@ -73,7 +72,6 @@ def load_common_paths(filepath: str) -> list:
         console.print(f"[bold red][!] Failed to load sensitive paths file '{filepath}': {e}[/bold red]")
         sys_exit(1)
 
-
 def handle_error(exc: Exception, verbose: bool = False) -> int:
     """
     Unified error handler to display error messages and return exit code.
@@ -94,15 +92,20 @@ def handle_error(exc: Exception, verbose: bool = False) -> int:
             console.print_exception()
         return 1
 
-
-def run_scan(target: str, scan_part: str, settings: dict, output_file: str = None,
-             output_format: str = "json", verbose: bool = False) -> None:
+async def run_scan(
+    target: str,
+    scan_part: str,
+    settings: dict,
+    output_file: str = None,
+    output_format: str = "json",
+    verbose: bool = False
+) -> None:
     """
-    Main scan runner function that orchestrates the full scanning workflow.
+    Main async scan runner function that orchestrates the full scanning workflow.
 
     Steps:
     1. Detect if Mailman is installed on the target.
-    2. Extract Mailman version.
+    2. Extract Mailman version asynchronously.
     3. Scan for sensitive paths if requested.
     4. Scan for CVEs based on detected version.
     5. Generate and save report if requested.
@@ -119,10 +122,7 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
         None
     """
 
-    # Set default delay to 0 if not provided in settings
-    delay = settings.get('delay')
-    if delay is None:
-        delay = 0
+    delay = settings.get('delay', 0)
     settings['delay'] = delay
 
     try:
@@ -132,7 +132,7 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
         path_results = []
         cve_results = []
 
-        # Step 1: Detect Mailman presence
+        # Step 1: Detect Mailman presence synchronously
         if scan_part in ['detector', 'full']:
             result = detector.check_mailman(target, settings)
             mailman_exists = result.get("found", False)
@@ -155,35 +155,29 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
                 return  # Stop further scanning after saving report
             console.print(f"[bold green][+] Mailman detected:[/bold green] {details}")
 
-        # Step 2: Get Mailman version
-        version_info = version.get_version(target, settings)
-        
-        # Check the type of version_info and handle possible outcomes
-        if not isinstance(version_info, dict):
-            # If the result is not a dict, something went wrong with version detection format
-            console.print("[bold red][!] Invalid version info format received.[/bold red]")
-        elif 'error' in version_info:
-            # If an error occurred during version detection, show the error message
-            console.print(f"[bold red][!] Error: {version_info['error']}[/bold red]")
-        elif version_info.get('conflict'):
-            # If multiple conflicting versions found, display them as a warning
-            console.print(f"[bold yellow][!] Multiple versions found:[/bold yellow] {version_info['versions']}")
-        else:
-            # Extract the detected version string
-            version_str = version_info.get('version')
-            # Validate the version string (not None, not generic etc.)
-            if is_valid_version(version_str):
-                # Valid version found, display success message
-                console.print(f"[bold green][+] Mailman version:[/bold green] {version_str}")
+        # Step 2: Get Mailman version asynchronously
+        if scan_part in ['version', 'full']:
+            version_info = await version.get_version(target, settings)
+            
+            # Check the type of version_info and handle possible outcomes
+            if not isinstance(version_info, dict):
+                console.print("[bold red][!] Invalid version info format received.[/bold red]")
+            elif 'error' in version_info:
+                console.print(f"[bold red][!] Error: {version_info['error']}[/bold red]")
+            elif version_info.get('conflict'):
+                console.print(f"[bold yellow][!] Multiple versions found:[/bold yellow] {version_info['versions']}")
             else:
-                # No valid version found, but this is not an error, just info
-                console.print("[bold cyan][*] No valid Mailman version detected.[/bold cyan]")
-
+                version_str = version_info.get('version')
+                if is_valid_version(version_str):
+                    console.print(f"[bold green][+] Mailman version:[/bold green] {version_str}")
+                else:
+                    console.print("[bold cyan][*] No valid Mailman version detected.[/bold cyan]")
+        else:
+            version_info = {}
 
         # Step 3: Scan sensitive paths
         if scan_part in ['paths', 'full']:
             common_paths = load_common_paths(settings.get('paths', 'data/common_paths.json'))
-            # Since load_common_paths exits on error or empty, we can safely continue here
             path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
             for item in path_results:
                 severity = item.get('severity', 'unknown')
@@ -212,3 +206,61 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
     except Exception as e:
         exit_code = handle_error(e, verbose)
         sys_exit(exit_code)
+
+def main():
+    """
+    Main entry point to run the async scan from a synchronous context.
+    Uses asyncio.run to execute async run_scan.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Mailmap Security Scanner CLI")
+    parser.add_argument('--target', required=True, help="Target URL for scanning")
+    parser.add_argument('--paths', default='data/common_paths.json', help="Custom paths file")
+    parser.add_argument('--proxy', help="Proxy URL (e.g. http://user:pass@host:port)")
+    parser.add_argument('--user-agent', help="Custom User-Agent string for HTTP requests")
+    parser.add_argument('--timeout', type=int, default=10, help="HTTP request timeout in seconds")
+    parser.add_argument('--delay', type=float, default=0, help="Delay between HTTP requests in seconds")
+    parser.add_argument('--output', help="Output file path")
+    parser.add_argument('--format', choices=['json', 'html', 'md'], default='json', help="Output format")
+    parser.add_argument('--verbose', action='store_true', help="Enable verbose logging")
+    parser.add_argument('--scan-part', choices=['detector', 'version', 'paths', 'cve', 'full'], default='full', help="Select scan part")
+    parser.add_argument('--max-retries', type=int, default=3, help="Max retries for HTTP requests")
+    parser.add_argument('--version', action='version', version='Mailmap Scanner 1.0')
+
+    args = parser.parse_args()
+
+    settings = {
+        'timeout': args.timeout,
+        'delay': args.delay,
+        'max_retries': args.max_retries,
+        'verbose': args.verbose,
+        'paths': args.paths,
+    }
+    if args.proxy:
+        settings['proxy'] = args.proxy
+    if args.user_agent:
+        settings['user_agent'] = args.user_agent
+
+    try:
+        run(
+            run_scan(
+                target=args.target,
+                scan_part=args.scan_part,
+                settings=settings,
+                output_file=args.output,
+                output_format=args.format,
+                verbose=args.verbose
+            )
+        )
+    except KeyboardInterrupt:
+        console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
+        sys_exit(130)
+    except Exception as e:
+        console.print(f"[bold red][!] Error: {str(e)}[/bold red]")
+        if args.verbose:
+            console.print_exception()
+        sys_exit(1)
+
+if __name__ == "__main__":
+    main()

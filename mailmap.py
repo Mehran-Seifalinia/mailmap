@@ -1,17 +1,17 @@
 from argparse import ArgumentParser, Namespace
 from sys import exit as sys_exit
+from asyncio import run, get_running_loop
 from rich.console import Console
-from asyncio import get_running_loop, run
 from runner import run_scan
 
 console = Console()
 
 def parse_args() -> Namespace:
     """
-    Parse CLI arguments for the Mailmap scanner.
-    
+    Parse command-line arguments for Mailmap Security Scanner.
+
     Returns:
-        Namespace: Parsed arguments
+        Namespace: Parsed CLI arguments
     """
     parser = ArgumentParser(description="Mailmap Security Scanner CLI")
     parser.add_argument('--target', required=True, help="Target URL for scanning")
@@ -30,12 +30,14 @@ def parse_args() -> Namespace:
 
 def main() -> None:
     """
-    Main entry point to run the async scan from a synchronous context.
-    Checks if an event loop is already running and runs the async function accordingly.
+    Main entry point for Mailmap scanner CLI.
+
+    Parses CLI arguments, prepares settings dictionary, and runs the asynchronous scan
+    handling event loop correctly depending on environment.
     """
     args = parse_args()
 
-    # Prepare settings dictionary from parsed CLI arguments
+    # Consolidate CLI options into a centralized settings dictionary
     settings = {
         'timeout': args.timeout,
         'delay': args.delay,
@@ -48,9 +50,9 @@ def main() -> None:
     if args.user_agent:
         settings['user_agent'] = args.user_agent
 
-    async def runner():
+    async def async_runner():
         """
-        Async runner function that calls the main async scan function.
+        Coroutine to run the main scanning function.
         """
         await run_scan(
             target=args.target,
@@ -58,34 +60,30 @@ def main() -> None:
             settings=settings,
             output_file=args.output,
             output_format=args.format,
-            verbose=args.verbose
+            verbose=args.verbose,
         )
 
     try:
-        # Attempt to get the currently running event loop
         try:
             loop = get_running_loop()
+            if loop.is_running():
+                # In case of running event loop (e.g., Jupyter), create and wait for task
+                import asyncio
+                task = loop.create_task(async_runner())
+                loop.run_until_complete(task)
+                return
         except RuntimeError:
-            # No event loop is running
-            loop = None
+            # No running event loop found
+            pass
 
-        if loop and loop.is_running():
-            # If an event loop is already running (e.g. in an interactive environment),
-            # create a task and wait for it to complete
-            task = loop.create_task(runner())
-            loop.run_until_complete(task)  # This can sometimes cause errors in some environments
-            # Alternative: await task (but this requires the context to be async)
-        else:
-            # No event loop is running, safe to use asyncio.run()
-            run(runner())
+        # Normal environment: run coroutine with asyncio.run()
+        run(async_runner())
 
     except KeyboardInterrupt:
-        # Handle Ctrl+C interruption gracefully
         console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
         sys_exit(130)
     except Exception as e:
-        # Print any other exceptions and optionally print traceback if verbose
-        console.print(f"[bold red][!] Error: {str(e)}[/bold red]")
+        console.print(f"[bold red][!] Unexpected error: {e}[/bold red]")
         if args.verbose:
             console.print_exception()
         sys_exit(1)

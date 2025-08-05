@@ -156,19 +156,29 @@ def run_scan(target: str, scan_part: str, settings: dict, output_file: str = Non
             console.print(f"[bold green][+] Mailman detected:[/bold green] {details}")
 
         # Step 2: Get Mailman version
-        if scan_part in ['version', 'full']:
-            version_info = version.get_version(target, settings)
-            if isinstance(version_info, dict):
-                if 'conflict' in version_info:
-                    console.print(f"[bold yellow][!] Multiple versions found:[/bold yellow] {version_info['versions']}")
-                else:
-                    version_str = version_info.get('version')
-                    if is_valid_version(version_str):
-                        console.print(f"[bold green][+] Mailman version:[/bold green] {version_str}")
-                    else:
-                        console.print("[bold red][!] No valid Mailman version detected.[/bold red]")
+        version_info = version.get_version(target, settings)
+        
+        # Check the type of version_info and handle possible outcomes
+        if not isinstance(version_info, dict):
+            # If the result is not a dict, something went wrong with version detection format
+            console.print("[bold red][!] Invalid version info format received.[/bold red]")
+        elif 'error' in version_info:
+            # If an error occurred during version detection, show the error message
+            console.print(f"[bold red][!] Error: {version_info['error']}[/bold red]")
+        elif version_info.get('conflict'):
+            # If multiple conflicting versions found, display them as a warning
+            console.print(f"[bold yellow][!] Multiple versions found:[/bold yellow] {version_info['versions']}")
+        else:
+            # Extract the detected version string
+            version_str = version_info.get('version')
+            # Validate the version string (not None, not generic etc.)
+            if is_valid_version(version_str):
+                # Valid version found, display success message
+                console.print(f"[bold green][+] Mailman version:[/bold green] {version_str}")
             else:
-                console.print("[bold red][!] Invalid version info format received.[/bold red]")
+                # No valid version found, but this is not an error, just info
+                console.print("[bold cyan][*] No valid Mailman version detected.[/bold cyan]")
+
 
         # Step 3: Scan sensitive paths
         if scan_part in ['paths', 'full']:

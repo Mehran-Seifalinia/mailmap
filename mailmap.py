@@ -1,6 +1,6 @@
 from argparse import ArgumentParser, Namespace
 from sys import exit as sys_exit
-from asyncio import run as asyncio_run, get_running_loop, create_task
+from asyncio import run as asyncio_run
 from rich.console import Console
 from runner import run_scan
 
@@ -33,18 +33,41 @@ def parse_args() -> Namespace:
     return parser.parse_args()
 
 
+async def async_main(args: Namespace, settings: dict) -> None:
+    """
+    Asynchronous main runner for the scanner.
+
+    Runs the scan with provided arguments and settings.
+    Handles exceptions and keyboard interrupts.
+    """
+    try:
+        await run_scan(
+            target=args.target,
+            scan_part=args.scan_part,
+            settings=settings,
+            output_file=args.output,
+            output_format=args.format,
+            verbose=args.verbose,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
+        sys_exit(130)
+    except Exception as e:
+        console.print(f"[bold red][!] Unexpected error: {e}[/bold red]")
+        if args.verbose:
+            console.print_exception()
+        sys_exit(1)
+
+
 def main() -> None:
     """
-    Main entry point for Mailmap scanner CLI.
+    Main synchronous entry point.
 
-    - Parses CLI arguments.
-    - Prepares settings dictionary.
-    - Runs the asynchronous scan.
-    - Handles both normal and nested event loop environments (Jupyter, etc.).
+    Parses arguments, prepares settings, and runs the async main runner.
     """
     args = parse_args()
 
-    # Centralized settings passed to scanner
+    # Prepare centralized settings dictionary
     settings = {
         'timeout': args.timeout,
         'delay': args.delay,
@@ -58,41 +81,8 @@ def main() -> None:
     if args.user_agent:
         settings['user_agent'] = args.user_agent
 
-    # Define the async task wrapper
-    async def async_runner():
-        await run_scan(
-            target=args.target,
-            scan_part=args.scan_part,
-            settings=settings,
-            output_file=args.output,
-            output_format=args.format,
-            verbose=args.verbose,
-        )
-
-    try:
-        try:
-            # Try to detect if an event loop is already running
-            loop = get_running_loop()
-            if loop.is_running():
-                # For environments like Jupyter: fallback to creating a task
-                create_task(async_runner())
-                return
-        except RuntimeError:
-            # No running loop: safe to proceed
-            pass
-
-        # Standard CLI execution
-        asyncio_run(async_runner())
-
-    except KeyboardInterrupt:
-        console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
-        sys_exit(130)
-
-    except Exception as e:
-        console.print(f"[bold red][!] Unexpected error: {e}[/bold red]")
-        if args.verbose:
-            console.print_exception()
-        sys_exit(1)
+    # Run the asynchronous main function using asyncio.run()
+    asyncio_run(async_main(args, settings))
 
 
 if __name__ == "__main__":

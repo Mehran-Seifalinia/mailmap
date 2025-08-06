@@ -183,7 +183,7 @@ async def detect_version(
 async def get_version(
     base_url: str,
     settings: Dict[str, Union[str, int, float]],
-    fingerprint_file: str = "data/fingerprints.json"
+    fingerprint_file: str = "data/fingerprints_version.json"
 ) -> Dict:
     """Load fingerprints and run version detection asynchronously."""
     fingerprints = load_fingerprints(fingerprint_file)
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     parser.add_argument("--proxy", help="Proxy URL")
     parser.add_argument("--user-agent", help="Custom User-Agent")
     parser.add_argument("--delay", type=float, default=1, help="Delay between requests (seconds)")
-    parser.add_argument("--fingerprints", default="data/fingerprints.json", help="Path to fingerprints JSON file")
+    parser.add_argument("--fingerprints", default="data/fingerprints_version.json", help="Path to fingerprints JSON file")
 
     args = parser.parse_args()
 

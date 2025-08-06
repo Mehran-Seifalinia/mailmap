@@ -245,7 +245,7 @@ async def detect_mailman_async(
                     for p in pending:
                         p.cancel()
                     try:
-                        await wait_for(run(gather(*pending, return_exceptions=True)), timeout=3)
+                        await wait_for(gather(*pending, return_exceptions=True), timeout=3)
                     except TimeoutError:
                         logger.warning("Timeout while cancelling pending tasks")
                     return result

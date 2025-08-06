@@ -256,7 +256,7 @@ async def detect_mailman_async(
 
 # ------------- Async Wrapper ------------- #
 
-def check_mailman(base_url: str, settings: Dict) -> Dict:
+async def check_mailman(base_url: str, settings: Dict) -> Dict:
     """
     Asynchronous wrapper to detect Mailman by loading paths and fingerprints from files,
     then running the async detection function.
@@ -281,7 +281,7 @@ def check_mailman(base_url: str, settings: Dict) -> Dict:
         fingerprints,
         timeout=settings.get("timeout", 5),
         verbose=settings.get("verbose", False)
-    ))
+    )
 
     return result
 

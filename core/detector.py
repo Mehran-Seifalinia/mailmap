@@ -262,7 +262,7 @@ async def check_mailman(base_url: str, settings: Dict) -> Dict:
     then running the async detection function.
     """
     paths_file = settings.get("paths", "data/common_paths.json")
-    fingerprints_file = settings.get("fingerprints", "data/fingerprints.json")
+    fingerprints_file = settings.get("fingerprints", "data/fingerprints_detection.json")
 
     common_paths_data = load_json_file(paths_file)
     fingerprints = load_json_file(fingerprints_file)
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     settings = {
         "timeout": args.timeout,
         "paths": "data/common_paths.json",
-        "fingerprints": "data/fingerprints.json",
+        "fingerprints": "data/fingerprints_detection.json",
         "verbose": args.verbose,
     }
 

@@ -1,12 +1,5 @@
 [
   {
-    "version": "Mailman 2.1.39",
-    "method": "header",
-    "location": "headers.X-Mailman-Version",
-    "pattern": "^2\\.1\\.39$",
-    "notes": "Specific Mailman 2.1.39 version header"
-  },
-  {
     "version": "Mailman 2.x",
     "method": "header",
     "location": "headers.Server",
@@ -58,13 +51,6 @@
   {
     "version": "Mailman 3.x",
     "method": "header",
-    "location": "headers.X-Mailman-Version",
-    "pattern": "^3\\.\\d+\\.\\d+$",
-    "notes": "Generic Mailman 3 version header pattern"
-  },
-  {
-    "version": "Mailman 3.x",
-    "method": "header",
     "location": "headers.Server",
     "pattern": "Mailman",
     "notes": "Mailman string in Server header for version 3"
@@ -89,20 +75,6 @@
     "location": "body",
     "pattern": "Mailman version 3",
     "notes": "Explicit mention of version 3 in page"
-  },
-  {
-    "version": "Mailman 3.x",
-    "method": "header",
-    "location": "headers.X-Mailman-Release",
-    "pattern": "^3\\.",
-    "notes": "X-Mailman-Release header starts with 3"
-  },
-  {
-    "version": "Mailman 2.x",
-    "method": "header",
-    "location": "headers.X-Mailman-Release",
-    "pattern": "^2\\.",
-    "notes": "X-Mailman-Release header starts with 2"
   },
   {
     "version": "Generic",
@@ -320,40 +292,5 @@
     "location": "body",
     "pattern": "mailman3",
     "notes": "Mention of mailman3"
-  },
-  {
-    "version": "Generic",
-    "method": "body",
-    "location": "body",
-    "pattern": "Mailman\\s+version\\s*[:\\-]?\\s*([\\d\\.]+)",
-    "notes": "Regex for extracting version from body"
-  },
-  {
-    "version": "Generic",
-    "method": "body",
-    "location": "body",
-    "pattern": "GNU Mailman\\s*version\\s*[:\\-]?\\s*([\\d\\.]+)",
-    "notes": "Regex for extracting version from body"
-  },
-  {
-    "version": "Generic",
-    "method": "body",
-    "location": "body",
-    "pattern": "Mailman\\s*([\\d\\.]+)",
-    "notes": "Regex for extracting version from body"
-  },
-  {
-    "version": "Generic",
-    "method": "body",
-    "location": "body",
-    "pattern": "version\\s*[:\\-]?\\s*([\\d]+\\.[\\d]+\\.[\\d]+)",
-    "notes": "Regex for extracting full version"
-  },
-  {
-    "version": "Generic",
-    "method": "body",
-    "location": "body",
-    "pattern": "version\\s*[:\\-]?\\s*([\\d]+\\.[\\d]+)",
-    "notes": "Regex for extracting short version"
   }
 ]

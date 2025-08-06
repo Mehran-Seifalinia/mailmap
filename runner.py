@@ -121,9 +121,9 @@ async def run_scan(
         path_results = []
         cve_results = []
 
-        # Step 1: Mailman detection (sync)
+        # Step 1: Mailman detection (async)
         if scan_part in ("detector", "full"):
-            result = detector.check_mailman(target, settings)
+            result = await detector.check_mailman(target, settings)
             mailman_found = result.get("found", False)
             details = result
             if not mailman_found:

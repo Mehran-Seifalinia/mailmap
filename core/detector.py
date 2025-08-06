@@ -1,4 +1,4 @@
-from asyncio import create_task, wait, FIRST_COMPLETED, Semaphore, TimeoutError, wait_for, run
+from asyncio import create_task, wait, FIRST_COMPLETED, Semaphore, TimeoutError, wait_for, run, gather
 from json import load
 from logging import getLogger, INFO, basicConfig
 from re import compile as re_compile, IGNORECASE, Pattern, Match, search
@@ -302,7 +302,7 @@ if __name__ == "__main__":
     }
 
     try:
-        result = check_mailman(args.target, settings)
+        result = run(check_mailman(args.target, settings))
         if result.get("found"):
             console.print(f"[+] Mailman detected: {result}", style="bold green")
         else:

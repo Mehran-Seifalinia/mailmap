@@ -5,6 +5,7 @@ from json import load, dump, JSONDecodeError
 from logging import getLogger, Logger, basicConfig
 from rich.logging import RichHandler
 from contextlib import asynccontextmanager
+from aiohttp_socks import ProxyConnector  # For proxy support, requires 'aiohttp_socks' package
 
 # Setup logger with RichHandler for pretty logs
 basicConfig(
@@ -18,11 +19,14 @@ logger: Logger = getLogger("mailmap")
 @asynccontextmanager
 async def create_session(
     headers: Optional[Dict[str, str]] = None,
-    user_agent: Optional[str] = None
+    user_agent: Optional[str] = None,
+    proxy: Optional[str] = None,
+    timeout: int = 10
 ):
     """
     Async context manager to create and close aiohttp ClientSession.
-    Adds custom User-Agent header if provided.
+    Supports custom User-Agent, optional proxy, and timeout settings.
+    Uses aiohttp_socks.ProxyConnector for SOCKS proxies if proxy is provided.
     """
     session_headers = headers.copy() if headers else {}
     if user_agent:
@@ -30,7 +34,13 @@ async def create_session(
     else:
         session_headers.setdefault("User-Agent", "MailmapScanner/1.0")
 
-    session = ClientSession(headers=session_headers)
+    # Setup proxy connector if proxy URL is provided
+    connector = ProxyConnector.from_url(proxy) if proxy else None
+
+    # Setup total timeout for session
+    timeout_obj = ClientTimeout(total=timeout)
+
+    session = ClientSession(headers=session_headers, connector=connector, timeout=timeout_obj)
     try:
         yield session
     finally:

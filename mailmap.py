@@ -28,8 +28,7 @@ def parse_args() -> Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+async def async_runner(args):
 
     settings = {
         'timeout': args.timeout,
@@ -43,15 +42,16 @@ def main() -> None:
     if args.user_agent:
         settings['user_agent'] = args.user_agent
 
-    async def async_runner():
-        await run_scan(
-            target=args.target,
-            scan_part=args.scan_part,
-            settings=settings,
-            output_file=args.output,
-            output_format=args.format,
-            verbose=args.verbose,
-        )
+    await run_scan(
+        target=args.target,
+        scan_part=args.scan_part,
+        settings=settings,
+        output_file=args.output,
+        output_format=args.format,
+        verbose=args.verbose,
+    )
+def main() -> None:
+    args = parse_args()
 
     # Check if an asyncio event loop is already running
     try:
@@ -64,7 +64,7 @@ def main() -> None:
 
     try:
         # Use asyncio.run safely even if event loop is already running because of nest_asyncio patch
-        asyncio_run(async_runner())
+        asyncio_run(async_runner(args))
     except KeyboardInterrupt:
         console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
         sys_exit(130)

@@ -1,3 +1,6 @@
+from nest_asyncio import apply  
+apply()  # Patch asyncio to allow nested event loops (e.g. in Jupyter or IDEs)
+
 from argparse import ArgumentParser, Namespace
 from sys import exit as sys_exit
 from asyncio import run as asyncio_run, get_running_loop
@@ -50,16 +53,17 @@ def main() -> None:
             verbose=args.verbose,
         )
 
+    # Check if an asyncio event loop is already running
     try:
         loop = get_running_loop()
         if loop.is_running():
-            console.print("[bold red][!] Detected running event loop. Please run this script in a standard Python environment, not inside Jupyter or other async runners.[/bold red]")
-            sys_exit(1)
+            console.print("[bold yellow][!] Detected running event loop. Using nest_asyncio to patch and allow nested loops.[/bold yellow]")
     except RuntimeError:
-        # No running event loop detected, safe to run normally
+        # No running event loop detected
         pass
 
     try:
+        # Use asyncio.run safely even if event loop is already running because of nest_asyncio patch
         asyncio_run(async_runner())
     except KeyboardInterrupt:
         console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")

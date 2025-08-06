@@ -254,11 +254,11 @@ async def detect_mailman_async(
 
     return {"found": False, "reason": "No known Mailman path responded with recognizable content."}
 
-# ------------- Synchronous Wrapper ------------- #
+# ------------- Async Wrapper ------------- #
 
 def check_mailman(base_url: str, settings: Dict) -> Dict:
     """
-    Synchronous wrapper to detect Mailman by loading paths and fingerprints from files,
+    Asynchronous wrapper to detect Mailman by loading paths and fingerprints from files,
     then running the async detection function.
     """
     paths_file = settings.get("paths", "data/common_paths.json")
@@ -275,7 +275,7 @@ def check_mailman(base_url: str, settings: Dict) -> Dict:
         common_paths.extend([item["path"] for item in common_paths_data.get(key, [])])
 
     # Run the async detection function synchronously using asyncio.run
-    result = run(detect_mailman_async(
+    result = await detect_mailman_async(
         base_url,
         common_paths,
         fingerprints,

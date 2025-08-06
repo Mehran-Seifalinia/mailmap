@@ -1,0 +1,68 @@
+[
+  {
+    "version": "Mailman 2.1.39",
+    "method": "header",
+    "location": "headers.X-Mailman-Version",
+    "pattern": "^2\\.1\\.39$",
+    "notes": "Specific Mailman 2.1.39 version header"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "header",
+    "location": "headers.X-Mailman-Version",
+    "pattern": "^3\\.\\d+\\.\\d+(?:rc\\d+|beta\\d+|alpha\\d+)?$",
+    "flags": "i",
+    "notes": "Generic Mailman 3 version header pattern, case-insensitive, supports rc/beta/alpha suffix"
+  },
+  {
+    "version": "Mailman 3.x",
+    "method": "header",
+    "location": "headers.X-Mailman-Release",
+    "pattern": "^3\\.",
+    "flags": "i",
+    "notes": "X-Mailman-Release header starts with 3 (case-insensitive)"
+  },
+  {
+    "version": "Mailman 2.x",
+    "method": "header",
+    "location": "headers.X-Mailman-Release",
+    "pattern": "^2\\.",
+    "flags": "i",
+    "notes": "X-Mailman-Release header starts with 2 (case-insensitive)"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(?i)Mailman\\s+version\\s*[:\\-]?\\s*([\\d\\.]+(?:rc\\d+|beta\\d+|alpha\\d+)?)",
+    "notes": "Regex for extracting version from body, case-insensitive, supports rc/beta/alpha suffix"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(?i)GNU Mailman\\s+version\\s*[:\\-]?\\s*([\\d\\.]+(?:rc\\d+|beta\\d+|alpha\\d+)?)",
+    "notes": "Regex for extracting version from body with GNU prefix, case-insensitive"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(?i)Mailman\\s*([\\d\\.]+(?:rc\\d+|beta\\d+|alpha\\d+)?)",
+    "notes": "Regex for extracting version from body (generic), case-insensitive"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(?i)version\\s*[:\\-]?\\s*([\\d]+\\.[\\d]+\\.[\\d]+(?:rc\\d+|beta\\d+|alpha\\d+)?)",
+    "notes": "Regex for extracting full version from body, case-insensitive"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "(?i)version\\s*[:\\-]?\\s*([\\d]+\\.[\\d]+(?:rc\\d+|beta\\d+|alpha\\d+)?)",
+    "notes": "Regex for extracting short version from body, case-insensitive"
+  }
+]

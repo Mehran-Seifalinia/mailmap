@@ -1,6 +1,6 @@
 from argparse import ArgumentParser, Namespace
 from sys import exit as sys_exit
-from asyncio import run as asyncio_run
+from asyncio import run as asyncio_run, get_running_loop
 from rich.console import Console
 from runner import run_scan
 
@@ -8,14 +8,7 @@ console = Console()
 
 
 def parse_args() -> Namespace:
-    """
-    Parse command-line arguments for Mailmap Security Scanner.
-
-    Returns:
-        Namespace: Parsed CLI arguments
-    """
     parser = ArgumentParser(description="Mailmap Security Scanner CLI")
-
     parser.add_argument('--target', required=True, help="Target URL for scanning")
     parser.add_argument('--paths', default='data/common_paths.json', help="Custom paths file")
     parser.add_argument('--proxy', help="Proxy URL (e.g. http://user:pass@host:port)")
@@ -29,18 +22,25 @@ def parse_args() -> Namespace:
                         help="Select scan part to run")
     parser.add_argument('--max-retries', type=int, default=3, help="Max retries for HTTP requests")
     parser.add_argument('--version', action='version', version='Mailmap Scanner 1.0')
-
     return parser.parse_args()
 
 
-async def async_main(args: Namespace, settings: dict) -> None:
-    """
-    Asynchronous main runner for the scanner.
+def main() -> None:
+    args = parse_args()
 
-    Runs the scan with provided arguments and settings.
-    Handles exceptions and keyboard interrupts.
-    """
-    try:
+    settings = {
+        'timeout': args.timeout,
+        'delay': args.delay,
+        'max_retries': args.max_retries,
+        'verbose': args.verbose,
+        'paths': args.paths,
+    }
+    if args.proxy:
+        settings['proxy'] = args.proxy
+    if args.user_agent:
+        settings['user_agent'] = args.user_agent
+
+    async def async_runner():
         await run_scan(
             target=args.target,
             scan_part=args.scan_part,
@@ -49,6 +49,18 @@ async def async_main(args: Namespace, settings: dict) -> None:
             output_format=args.format,
             verbose=args.verbose,
         )
+
+    try:
+        loop = get_running_loop()
+        if loop.is_running():
+            console.print("[bold red][!] Detected running event loop. Please run this script in a standard Python environment, not inside Jupyter or other async runners.[/bold red]")
+            sys_exit(1)
+    except RuntimeError:
+        # No running event loop detected, safe to run normally
+        pass
+
+    try:
+        asyncio_run(async_runner())
     except KeyboardInterrupt:
         console.print("\n[bold red][!] Scan cancelled by user (Ctrl+C)[/bold red]")
         sys_exit(130)
@@ -57,32 +69,6 @@ async def async_main(args: Namespace, settings: dict) -> None:
         if args.verbose:
             console.print_exception()
         sys_exit(1)
-
-
-def main() -> None:
-    """
-    Main synchronous entry point.
-
-    Parses arguments, prepares settings, and runs the async main runner.
-    """
-    args = parse_args()
-
-    # Prepare centralized settings dictionary
-    settings = {
-        'timeout': args.timeout,
-        'delay': args.delay,
-        'max_retries': args.max_retries,
-        'verbose': args.verbose,
-        'paths': args.paths,
-    }
-
-    if args.proxy:
-        settings['proxy'] = args.proxy
-    if args.user_agent:
-        settings['user_agent'] = args.user_agent
-
-    # Run the asynchronous main function using asyncio.run()
-    asyncio_run(async_main(args, settings))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from core.utils import create_session  # async context manager returning aiohttp
 from rich.console import Console
 from rich.theme import Theme
 
+# Setup logger and rich console for colorful output
 logger = getLogger(__name__)
 console = Console(theme=Theme({
     "error": "bold red",
@@ -19,7 +20,10 @@ console = Console(theme=Theme({
 }))
 
 def load_fingerprints(filepath: str) -> List[Dict]:
-    """Load fingerprint patterns from JSON file."""
+    """
+    Load fingerprint patterns from a JSON file.
+    Returns a list of fingerprint dictionaries.
+    """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json_load(f)
@@ -30,7 +34,9 @@ def load_fingerprints(filepath: str) -> List[Dict]:
         return []
 
 def is_valid_url(url: str) -> bool:
-    """Check if URL has valid scheme and netloc."""
+    """
+    Validate URL format - must have http or https scheme and a network location.
+    """
     parsed = urlparse(url)
     valid = parsed.scheme in ("http", "https") and bool(parsed.netloc)
     if not valid:
@@ -38,7 +44,10 @@ def is_valid_url(url: str) -> bool:
     return valid
 
 def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
-    """Extract version string using regex pattern from given text."""
+    """
+    Extract version string by searching the text with a compiled regex pattern.
+    Returns the first matching group or the whole match if groups not present.
+    """
     match = pattern.search(text)
     if match:
         try:
@@ -53,10 +62,9 @@ async def detect_version(
     fingerprints: List[Dict]
 ) -> Dict[str, Union[str, bool, List[str], None]]:
     """
-    Detect Mailman version by applying fingerprints on target URLs/headers/body asynchronously.
+    Detect Mailman version asynchronously by applying fingerprint regexes on target URLs, headers, or body.
     Filters out generic or invalid version strings.
     """
-
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
         return {"error": "Invalid URL format. URL must start with http:// or https:// and include a domain."}
@@ -66,6 +74,7 @@ async def detect_version(
     user_agent = settings.get("user_agent")
     delay = settings.get("delay", 1)
 
+    # Default user-agent list to rotate through if none specified
     user_agents = [user_agent] if user_agent else [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
@@ -76,7 +85,6 @@ async def detect_version(
     user_agent_index = 0
 
     async with create_session(user_agent=user_agent, proxy=proxy, timeout=timeout) as session:
-
         for fp in fingerprints:
             method = fp.get("method")
             location = fp.get("location")
@@ -85,7 +93,7 @@ async def detect_version(
 
             pattern = re_compile(pattern_str, IGNORECASE) if pattern_str else None
 
-            # Rotate User-Agent for each request
+            # Rotate User-Agent header for each request
             current_ua = user_agents[user_agent_index % len(user_agents)]
             session.headers.update({"User-Agent": current_ua})
             user_agent_index += 1
@@ -99,43 +107,37 @@ async def detect_version(
                         if response.status == 200:
                             text = await response.text()
                             if not pattern:
-                                # No pattern means just presence check; add version_label only if meaningful
+                                # If no regex pattern, presence is enough
                                 if version_label.lower() != "generic":
                                     found_versions.add(version_label)
                                 else:
                                     logger.debug(f"Ignored generic version label for URL presence: {url_to_check}")
                             else:
                                 ver = extract_version_from_text(text, pattern)
-                                if ver:
-                                    if ver.lower() == "generic":
-                                        logger.debug(f"Ignored generic version label from {url_to_check}")
-                                    else:
-                                        found_versions.add(ver)
-                                        logger.debug(f"Fingerprint matched by URL body regex: {url_to_check} -> {ver}")
+                                if ver and ver.lower() != "generic":
+                                    found_versions.add(ver)
+                                    logger.debug(f"Matched version via URL body regex: {url_to_check} -> {ver}")
                                 else:
-                                    logger.debug(f"No version found in response from {url_to_check}")
+                                    logger.debug(f"No version found or generic version ignored at URL: {url_to_check}")
 
                 elif method == "header":
+                    # Try main URL and /mailman path for header version info
                     urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
                     found_in_header = False
                     for u in urls_to_try:
                         url_to_check = u
                         async with session.get(u) as response:
-                            if response.status < 200 or response.status >= 300:
-                                continue
-                            header_val = response.headers.get(location)
-                            if header_val and pattern:
-                                ver = extract_version_from_text(header_val, pattern)
-                                if ver:
-                                    if ver.lower() == "generic":
-                                        logger.debug(f"Ignored generic version label from header '{location}' at {u}")
-                                    else:
+                            if 200 <= response.status < 300:
+                                header_val = response.headers.get(location)
+                                if header_val and pattern:
+                                    ver = extract_version_from_text(header_val, pattern)
+                                    if ver and ver.lower() != "generic":
                                         found_versions.add(ver)
                                         found_in_header = True
-                                        logger.debug(f"Fingerprint matched in header '{location}': {u} -> {ver}")
+                                        logger.debug(f"Matched version in header '{location}' at {u}: {ver}")
                                         break
-                                else:
-                                    logger.debug(f"No version found in header '{location}' at {u}")
+                                    else:
+                                        logger.debug(f"No version found or generic ignored in header '{location}' at {u}")
                     if found_in_header:
                         continue
 
@@ -144,28 +146,24 @@ async def detect_version(
                     for u in urls_to_try:
                         url_to_check = u
                         async with session.get(u) as response:
-                            if response.status < 200 or response.status >= 300:
-                                continue
-                            content_type = response.headers.get("Content-Type", "").lower()
-                            if "text" not in content_type:
-                                continue
-                            content = await response.text()
-                            content = content[:100_000]
-                            if pattern:
-                                ver = extract_version_from_text(content, pattern)
-                                if ver:
-                                    if ver.lower() == "generic":
-                                        logger.debug(f"Ignored generic version label from body content at {u}")
-                                    else:
-                                        found_versions.add(ver)
-                                        logger.debug(f"Fingerprint matched in body content: {u} -> {ver}")
-                                        break
-                                else:
-                                    logger.debug(f"No version found in body content at {u}")
+                            if 200 <= response.status < 300:
+                                content_type = response.headers.get("Content-Type", "").lower()
+                                if "text" in content_type:
+                                    content = await response.text()
+                                    content = content[:100_000]  # Limit body size for performance
+                                    if pattern:
+                                        ver = extract_version_from_text(content, pattern)
+                                        if ver and ver.lower() != "generic":
+                                            found_versions.add(ver)
+                                            logger.debug(f"Matched version in body content at {u}: {ver}")
+                                            break
+                                        else:
+                                            logger.debug(f"No version found or generic ignored in body content at {u}")
 
             except Exception as e:
-                logger.error(f"Unexpected error during fingerprint scan at {url_to_check if url_to_check else 'N/A'}: {e}")
+                logger.error(f"Error during fingerprint scan at {url_to_check or 'N/A'}: {e}")
 
+            # Delay between requests to avoid overwhelming target
             await sleep(delay)
 
     if not found_versions:
@@ -177,7 +175,7 @@ async def detect_version(
         logger.info(f"Detected Mailman version: {ver}")
         return {"version": ver}
 
-    logger.warning(f"Version conflict detected. Found versions: {found_versions}")
+    logger.warning(f"Version conflict detected. Multiple versions found: {found_versions}")
     return {"conflict": True, "versions": list(found_versions)}
 
 async def get_version(
@@ -185,27 +183,29 @@ async def get_version(
     settings: Dict[str, Union[str, int, float]],
     fingerprint_file: str = "data/fingerprints_version.json"
 ) -> Dict:
-    """Load fingerprints and run version detection asynchronously."""
+    """
+    Load fingerprints from file and run version detection asynchronously.
+    """
     fingerprints = load_fingerprints(fingerprint_file)
     if not fingerprints:
         logger.error("No fingerprints loaded, aborting version detection.")
         return {"error": "No fingerprints loaded."}
     return await detect_version(base_url, settings, fingerprints)
 
-
 if __name__ == "__main__":
     from logging import basicConfig
     from sys import exit as sys_exit
     from asyncio import run
 
+    # Setup basic logging
     basicConfig(level=20, format='[%(levelname)s] %(message)s')
 
     parser = ArgumentParser(description="Mailman Version Detector with Fingerprints")
     parser.add_argument("target", help="Target base URL (e.g. https://example.com)")
-    parser.add_argument("--timeout", type=int, default=5, help="HTTP timeout (seconds)")
-    parser.add_argument("--proxy", help="Proxy URL")
-    parser.add_argument("--user-agent", help="Custom User-Agent")
-    parser.add_argument("--delay", type=float, default=1, help="Delay between requests (seconds)")
+    parser.add_argument("--timeout", type=int, default=5, help="HTTP timeout in seconds")
+    parser.add_argument("--proxy", help="Proxy URL (optional)")
+    parser.add_argument("--user-agent", help="Custom User-Agent string (optional)")
+    parser.add_argument("--delay", type=float, default=1, help="Delay between requests in seconds")
     parser.add_argument("--fingerprints", default="data/fingerprints_version.json", help="Path to fingerprints JSON file")
 
     args = parser.parse_args()
@@ -231,11 +231,12 @@ if __name__ == "__main__":
         if result.get("conflict"):
             console.print(f"[warning]Version conflict detected! Found versions: {', '.join(result['versions'])}[/warning]")
             sys_exit(2)
-        elif result.get("version"):
-            console.print(f"[success]Detected Mailman version: {result['version']}[/success]")
+
+        if version := result.get("version"):
+            console.print(f"[success]Detected Mailman version: {version}[/success]")
             sys_exit(0)
-        else:
-            console.print("[info]No Mailman version detected.[/info]")
-            sys_exit(3)
+
+        console.print("[info]No Mailman version detected.[/info]")
+        sys_exit(3)
 
     run(main())

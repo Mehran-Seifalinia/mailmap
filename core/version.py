@@ -1,24 +1,25 @@
+# core/version.py
+
 from re import compile as re_compile, Pattern, IGNORECASE
 from urllib.parse import urljoin, urlparse
 from typing import Optional, Dict, Set, List, Union
 from json import load as json_load
 from logging import getLogger
-from argparse import ArgumentParser
-from sys import exit as sys_exit
-from asyncio import sleep, run
+from asyncio import sleep
 from core.utils import create_session  # async context manager returning aiohttp.ClientSession
-from rich.console import Console
-from rich.theme import Theme
 
-# Setup logger and rich console for colorful output
-logger = getLogger(__name__)
-console = Console(theme=Theme({
-    "error": "bold red",
-    "success": "bold green",
-    "warning": "bold yellow",
-    "info": "bold cyan"
-}))
+# --------------------------------------------------------------------
+# Shared project-wide logger
+# NOTE:
+# - Configured globally (e.g., in utils.py or main entrypoint) with RichHandler.
+# - Do NOT add handlers here to avoid duplicate log lines.
+# --------------------------------------------------------------------
+logger = getLogger("mailmap")
 
+
+# --------------------------------------------------------------------
+# Load version fingerprints from JSON file
+# --------------------------------------------------------------------
 def load_fingerprints(filepath: str) -> List[Dict]:
     """
     Load fingerprint patterns from a JSON file.
@@ -33,6 +34,10 @@ def load_fingerprints(filepath: str) -> List[Dict]:
         logger.error(f"Failed to load fingerprints file '{filepath}': {e}")
         return []
 
+
+# --------------------------------------------------------------------
+# Validate target URL format
+# --------------------------------------------------------------------
 def is_valid_url(url: str) -> bool:
     """
     Validate URL format - must have http or https scheme and a network location.
@@ -40,9 +45,13 @@ def is_valid_url(url: str) -> bool:
     parsed = urlparse(url)
     valid = parsed.scheme in ("http", "https") and bool(parsed.netloc)
     if not valid:
-        logger.error("Invalid URL format. URL must start with http:// or https:// and include a domain.")
+        logger.error("Invalid URL format. Must start with http:// or https:// and include a domain.")
     return valid
 
+
+# --------------------------------------------------------------------
+# Extract version string from regex match
+# --------------------------------------------------------------------
 def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
     """
     Extract version string by searching the text with a compiled regex pattern.
@@ -56,18 +65,22 @@ def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
             return match.group(0).strip()
     return None
 
+
+# --------------------------------------------------------------------
+# Core asynchronous version detection logic
+# --------------------------------------------------------------------
 async def detect_version(
     base_url: str,
     settings: Dict[str, Union[str, int, float]],
     fingerprints: List[Dict]
 ) -> Dict[str, Union[str, bool, List[str], None]]:
     """
-    Detect Mailman version asynchronously by applying fingerprint regexes on target URLs, headers, or body.
-    Filters out generic or invalid version strings.
+    Detect Mailman version asynchronously by applying fingerprint regexes
+    on target URLs, headers, or body. Filters out generic or invalid version strings.
     """
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
-        return {"error": "Invalid URL format. URL must start with http:// or https:// and include a domain."}
+        return {"error": "Invalid URL format. Must start with http:// or https:// and include a domain."}
 
     timeout = settings.get("timeout", 5)
     proxy = settings.get("proxy")
@@ -101,13 +114,15 @@ async def detect_version(
             url_to_check = None
 
             try:
+                # ------------------------------------------------
+                # Method: URL → check specific path content
+                # ------------------------------------------------
                 if method == "url":
                     url_to_check = urljoin(base_url + "/", location.lstrip("/"))
                     async with session.get(url_to_check) as response:
                         if response.status == 200:
                             text = await response.text()
                             if not pattern:
-                                # If no regex pattern, presence is enough
                                 if version_label.lower() != "generic":
                                     found_versions.add(version_label)
                                 else:
@@ -118,10 +133,12 @@ async def detect_version(
                                     found_versions.add(ver)
                                     logger.debug(f"Matched version via URL body regex: {url_to_check} -> {ver}")
                                 else:
-                                    logger.debug(f"No version found or generic version ignored at URL: {url_to_check}")
+                                    logger.debug(f"No version found or generic ignored at URL: {url_to_check}")
 
+                # ------------------------------------------------
+                # Method: HEADER → check HTTP headers for version
+                # ------------------------------------------------
                 elif method == "header":
-                    # Try main URL and /mailman path for header version info
                     urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
                     found_in_header = False
                     for u in urls_to_try:
@@ -141,6 +158,9 @@ async def detect_version(
                     if found_in_header:
                         continue
 
+                # ------------------------------------------------
+                # Method: BODY → check HTML/text content for version
+                # ------------------------------------------------
                 elif method == "body":
                     urls_to_try = [base_url, urljoin(base_url + "/", "mailman")]
                     for u in urls_to_try:
@@ -163,9 +183,11 @@ async def detect_version(
             except Exception as e:
                 logger.error(f"Error during fingerprint scan at {url_to_check or 'N/A'}: {e}")
 
-            # Delay between requests to avoid overwhelming target
-            await sleep(delay)
+            await sleep(delay)  # polite delay between requests
 
+    # ------------------------------------------------
+    # Final version detection results
+    # ------------------------------------------------
     if not found_versions:
         logger.info("No valid Mailman version detected (only generic or none found).")
         return {"version": None}
@@ -178,6 +200,10 @@ async def detect_version(
     logger.warning(f"Version conflict detected. Multiple versions found: {found_versions}")
     return {"conflict": True, "versions": list(found_versions)}
 
+
+# --------------------------------------------------------------------
+# API function for external usage
+# --------------------------------------------------------------------
 async def get_version(
     base_url: str,
     settings: Dict[str, Union[str, int, float]],
@@ -188,25 +214,30 @@ async def get_version(
     """
     fingerprints = load_fingerprints(fingerprint_file)
     if not fingerprints:
-        logger.error("No fingerprints loaded, aborting version detection.")
+        logger.error("No fingerprints loaded. Aborting version detection.")
         return {"error": "No fingerprints loaded."}
     return await detect_version(base_url, settings, fingerprints)
 
+
+# --------------------------------------------------------------------
+# Standalone entrypoint for manual testing
+# --------------------------------------------------------------------
 if __name__ == "__main__":
-    from logging import basicConfig
-    from sys import exit as sys_exit
+    from argparse import ArgumentParser
+    from logging import basicConfig, INFO
     from asyncio import run
 
-    # Setup basic logging
-    basicConfig(level=20, format='[%(levelname)s] %(message)s')
+    # Minimal logger setup for direct runs
+    basicConfig(level=INFO, format="[%(levelname)s] %(message)s")
 
     parser = ArgumentParser(description="Mailman Version Detector with Fingerprints")
-    parser.add_argument("target", help="Target base URL (e.g. https://example.com)")
+    parser.add_argument("target", help="Target base URL (e.g., https://example.com)")
     parser.add_argument("--timeout", type=int, default=5, help="HTTP timeout in seconds")
     parser.add_argument("--proxy", help="Proxy URL (optional)")
     parser.add_argument("--user-agent", help="Custom User-Agent string (optional)")
     parser.add_argument("--delay", type=float, default=1, help="Delay between requests in seconds")
-    parser.add_argument("--fingerprints", default="data/fingerprints_version.json", help="Path to fingerprints JSON file")
+    parser.add_argument("--fingerprints", default="data/fingerprints_version.json",
+                        help="Path to fingerprints JSON file")
 
     args = parser.parse_args()
 
@@ -217,26 +248,10 @@ if __name__ == "__main__":
         "delay": args.delay,
     }
 
-    async def main():
-        try:
-            result = await get_version(args.target, settings, args.fingerprints)
-        except KeyboardInterrupt:
-            console.print("\n[error]Process interrupted by user (Ctrl+C). Exiting...[/error]")
-            sys_exit(130)  # 128 + 2 for SIGINT
-
-        if "error" in result:
-            console.print(f"[error]Error: {result['error']}[/error]")
-            sys_exit(1)
-
-        if result.get("conflict"):
-            console.print(f"[warning]Version conflict detected! Found versions: {', '.join(result['versions'])}[/warning]")
-            sys_exit(2)
-
-        if version := result.get("version"):
-            console.print(f"[success]Detected Mailman version: {version}[/success]")
-            sys_exit(0)
-
-        console.print("[info]No Mailman version detected.[/info]")
-        sys_exit(3)
-
-    run(main())
+    try:
+        result = run(get_version(args.target, settings, args.fingerprints))
+        logger.info(f"Version detection result: {result}")
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user (Ctrl+C). Exiting...")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")

@@ -9,43 +9,32 @@ from urllib3 import exceptions as urllib3_exceptions
 from re import compile as re_compile, IGNORECASE
 from sys import exit as sys_exit
 from signal import signal, SIGINT
-from logging import getLogger, StreamHandler, Formatter, DEBUG, INFO
-from colorama import Fore, Style, init as colorama_init
+from logging import getLogger, DEBUG, INFO
 
-# -----------------------------
-# Color and SSL warning setup
-# -----------------------------
-# Initialize colorama for colored terminal output
-colorama_init(autoreset=True)
-
-# Suppress SSL warnings because verify=False is used intentionally here
+# -----------------------------------------------------------
+# SSL warnings: we intentionally use verify=False in requests
+# -----------------------------------------------------------
 disable_warnings(urllib3_exceptions.InsecureRequestWarning)
 
-# -----------------------------
-# Logger setup
-# -----------------------------
-logger = getLogger("mailmap_path")
+# -----------------------------------------------------------
+# Logger: reuse the app-wide logger (configured in utils.py)
+# IMPORTANT:
+# - Do NOT add handlers here (avoid duplicate console lines).
+# - Let the global logging config (e.g., RichHandler) handle colors/layout.
+# -----------------------------------------------------------
+logger = getLogger("mailmap")  # shared logger across the project
 
-# Prevent duplicate handlers if module is imported multiple times
-if not logger.handlers:
-    handler = StreamHandler()
-    handler.setFormatter(Formatter("[%(levelname)s] %(message)s"))
-    logger.addHandler(handler)
 
-# Default to INFO: only essential messages (200 OK) will be printed.
-# When verbose=True, we will bump to DEBUG at runtime to show extras.
-logger.setLevel(INFO)
-
-# -----------------------------
+# -----------------------------------------------------------
 # HTTP settings
-# -----------------------------
+# -----------------------------------------------------------
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/102.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:50.0) Gecko/20100101 Firefox/50.0",
 ]
-REQUEST_DELAY = 1  # seconds between requests
+REQUEST_DELAY = 1  # polite delay between requests (seconds)
 
 # Precompiled regex for detecting Mailman-related content (case-insensitive)
 MAILMAN_PATTERN = re_compile(
@@ -53,26 +42,33 @@ MAILMAN_PATTERN = re_compile(
     flags=IGNORECASE
 )
 
-# -----------------------------
+
+# -----------------------------------------------------------
 # Signal handling
-# -----------------------------
+# -----------------------------------------------------------
 def handle_sigint(signum, frame) -> None:
-    """Gracefully exit on Ctrl+C (SIGINT)."""
-    print(f"\n{Fore.RED}[!] Interrupted by user (Ctrl+C). Exiting...{Style.RESET_ALL}")
+    """
+    Gracefully exit on Ctrl+C (SIGINT).
+    Use logger to avoid mixing print-based output with logging.
+    """
+    logger.warning("Interrupted by user (Ctrl+C). Exiting...")
     sys_exit(0)
+
 
 signal(SIGINT, handle_sigint)
 
-# -----------------------------
+
+# -----------------------------------------------------------
 # Helpers
-# -----------------------------
+# -----------------------------------------------------------
 def configure_logger(verbose: bool) -> None:
     """
-    Configure logger level based on verbosity.
-    - verbose=False: INFO → only essential, success messages (HTTP 200 + matched content)
-    - verbose=True:  DEBUG → include redirects, non-200/3xx statuses, and network issues
+    Configure logger level based on verbosity:
+      - verbose=False → INFO: only essential success messages (HTTP 200 + matched content).
+      - verbose=True  → DEBUG: include redirects, non-200/3xx statuses, and network issues.
     """
     logger.setLevel(DEBUG if verbose else INFO)
+
 
 def ensure_scheme(url: str) -> str:
     """
@@ -84,6 +80,7 @@ def ensure_scheme(url: str) -> str:
         return "http://" + url
     return url
 
+
 def is_valid_url(url: str) -> bool:
     """
     Validate that URL has a valid HTTP/HTTPS scheme and a network location.
@@ -91,9 +88,10 @@ def is_valid_url(url: str) -> bool:
     parsed = urlparse(url)
     valid = parsed.scheme in ("http", "https") and bool(parsed.netloc)
     if not valid:
-        # Keep as ERROR: input is invalid and should always be shown.
-        logger.error("Invalid URL format. URL must start with http:// or https:// and include a domain.")
+        # Always visible: invalid input should be surfaced.
+        logger.error("Invalid URL. It must start with http:// or https:// and include a domain.")
     return valid
+
 
 def load_common_paths(filepath: str, version: str = "v2") -> List[Dict]:
     """
@@ -113,19 +111,20 @@ def load_common_paths(filepath: str, version: str = "v2") -> List[Dict]:
             return data.get("v2_paths", [])
         if version == "v3":
             return data.get("v3_paths", [])
-        logger.debug(f"Unknown version '{version}', defaulting to 'v2'")
+        logger.debug(f"Unknown version '{version}', defaulting to 'v2'.")
         return data.get("v2_paths", [])
     except (FileNotFoundError, OSError) as e:
-        # Keep as ERROR: this is critical for program flow.
+        # Critical for program flow: keep as error.
         logger.error(f"Error loading common paths file: {e}")
         return []
     except Exception as e:
         logger.error(f"Unexpected error loading common paths file: {e}")
         return []
 
-# -----------------------------
+
+# -----------------------------------------------------------
 # Core scanning
-# -----------------------------
+# -----------------------------------------------------------
 def check_paths(
     base_url: str,
     paths: List[Dict],
@@ -136,20 +135,14 @@ def check_paths(
     """
     Check accessibility of common Mailman paths under a base URL.
 
-    Printing policy (controlled by `verbose`):
-      - verbose=False → Only log HTTP 200 + content-matched paths (green).
+    Logging policy (controlled by `verbose`):
+      - verbose=False → Only log HTTP 200 + content-matched paths (single, clean line per hit).
       - verbose=True  → Additionally log redirects (3xx), non-200/3xx statuses (e.g., 404/403/500),
                         network issues, and 200s without Mailman content (as debug).
 
-    Args:
-        base_url: Base URL to scan.
-        paths:    List of dict entries; each must contain a 'path'.
-        timeout:  Per-request timeout in seconds.
-        request_delay: Delay between requests to be polite.
-        verbose:  Toggle extended logging.
-
     Returns:
-        A list of dicts describing discovered paths (includes 3xx entries in data regardless of verbosity).
+        A list of dicts describing discovered paths.
+        (Includes 3xx entries for downstream reporting, even if they are not logged in quiet mode.)
     """
     configure_logger(verbose)
 
@@ -176,7 +169,7 @@ def check_paths(
             status = response.status_code
             text = response.text if status == 200 else ""
 
-            # Case 1: 200 OK + content looks like Mailman → always informative
+            # Case 1: 200 OK + content looks like Mailman → always informative (single line)
             if status == 200 and MAILMAN_PATTERN.search(text):
                 accessible_paths.append({
                     "path": path,
@@ -184,49 +177,51 @@ def check_paths(
                     "description": item.get("description", ""),
                     "access_level": item.get("access_level", "unknown")
                 })
-                logger.info(f"{Fore.GREEN}Accessible path found: {full_url} - HTTP {status}{Style.RESET_ALL}")
+                # Use a simple icon for readability; color (if any) comes from the global handler.
+                logger.info(f"✅ Accessible path: {full_url} (HTTP {status})")
 
             # Case 2: 200 OK but content does not look like Mailman → debug only
             elif status == 200:
-                logger.debug(
-                    f"Path {full_url} responded 200 but content did not match Mailman pattern."
-                )
+                logger.debug(f"200 OK but content did not match Mailman pattern: {full_url}")
 
-            # Case 3: Redirects (3xx) → include in data, print only in verbose
+            # Case 3: Redirects (3xx) → include in data; log only in verbose
             elif 300 <= status < 400:
                 accessible_paths.append({
                     "path": path,
                     "status_code": status,
-                    "description": item.get("description", "") + " (Redirect)",
+                    "description": (item.get("description", "") + " (Redirect)").strip(),
                     "access_level": item.get("access_level", "unknown")
                 })
-                logger.debug(f"{Fore.BLUE}Redirect at {full_url} - HTTP {status}{Style.RESET_ALL}")
+                logger.debug(f"↪️ Redirect: {full_url} (HTTP {status})")
 
             # Case 4: Non-200/3xx statuses (e.g., 404/403/500) → debug only
             else:
-                logger.debug(f"Non-200/3xx status at {full_url}: HTTP {status}")
+                logger.debug(f"Non-200/3xx status: {full_url} (HTTP {status})")
 
         except (Timeout, ConnectionError) as e:
-            # Network issues: only show in verbose
-            logger.debug(f"Connection error at {full_url}: {e}")
+            # Network issues: verbose only
+            logger.debug(f"Connection/timeout error at {full_url}: {e}")
         except (TooManyRedirects, HTTPError, RequestException) as e:
             logger.debug(f"Request failed at {full_url}: {e}")
         except Exception as e:
             # Unexpected exceptions should always be visible
-            logger.error(f"{Fore.RED}Unexpected error at {full_url}: {e}{Style.RESET_ALL}")
+            logger.error(f"Unexpected error at {full_url}: {e}")
 
         sleep(request_delay)
 
     return accessible_paths
 
-# -----------------------------
+
+# -----------------------------------------------------------
 # Interactive entrypoint
-# -----------------------------
+# -----------------------------------------------------------
 def main() -> None:
     """
-    Interactive runner. Keeps printing policy consistent with `verbose`.
-    In non-verbose mode, only 200+matched entries are printed.
-    In verbose mode, redirects and other details are printed via DEBUG logs.
+    Interactive runner.
+    NOTE:
+      - To avoid duplicated lines, we DO NOT print here; we only log.
+      - We also avoid re-listing paths already logged during scanning.
+        Instead, we optionally log a compact summary at the end.
     """
     try:
         target = input("Enter target base URL (e.g., https://example.com): ").strip()
@@ -250,28 +245,20 @@ def main() -> None:
         if results and isinstance(results[0], dict) and "error" in results[0]:
             logger.error(f"Error: {results[0]['error']}")
         elif results:
-            # In non-verbose mode, print only 200 OK + matched entries
-            printable = results if verbose else [r for r in results if r.get("status_code") == 200]
-
-            if printable:
-                print(f"\n{Fore.GREEN}Accessible Mailman paths:{Style.RESET_ALL}")
-                for item in printable:
-                    print(
-                        f"{Fore.CYAN}{item['path']} - HTTP {item['status_code']} - "
-                        f"{item.get('description','')} - Access level: {item.get('access_level','unknown')}{Style.RESET_ALL}"
-                    )
-            else:
-                # Keep quiet if nothing matched in non-verbose; still show a single line to inform.
-                logger.info("No accessible Mailman paths (HTTP 200 + matched content) found.")
+            # Optional compact summary (does NOT re-print each path)
+            ok_200 = sum(1 for r in results if r.get("status_code") == 200)
+            redir = sum(1 for r in results if 300 <= int(r.get("status_code", 0)) < 400)
+            logger.info(f"Scan finished. ✅ {ok_200} accessible (200), ↪️ {redir} redirects.")
         else:
             logger.info("No accessible Mailman paths found.")
 
     except KeyboardInterrupt:
-        print(f"\n{Fore.RED}[!] Interrupted by user (Ctrl+C). Exiting...{Style.RESET_ALL}")
+        logger.warning("Interrupted by user (Ctrl+C). Exiting...")
         sys_exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys_exit(1)
+
 
 if __name__ == "__main__":
     main()

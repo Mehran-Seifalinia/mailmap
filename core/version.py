@@ -7,6 +7,7 @@ from json import load as json_load
 from logging import getLogger
 from asyncio import sleep
 from core.utils import create_session  # async context manager returning aiohttp.ClientSession
+from packaging.version import Version, InvalidVersion
 
 logger = getLogger("mailmap")
 
@@ -60,8 +61,7 @@ def _compile_regex(pattern_str: str, flags_str: Optional[str]) -> Pattern:
                 flags |= MULTILINE
             elif ch == "s":
                 flags |= DOTALL
-    # default IGNORECASE for robustness unless author explicitly relies on case
-    # If author already provided (?i), it won't hurt to also pass IGNORECASE.
+    # default IGNORECASE for robustness
     flags |= IGNORECASE
     return re_compile(pattern_str, flags)
 
@@ -85,7 +85,7 @@ def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
 # --------------------------------------------------------------------
 def _build_candidate_urls(base_url: str) -> List[str]:
     """
-    Build a small, ordered list of plausible URLs where Mailman version strings are commonly found.
+    Build a list of plausible URLs where Mailman version strings are commonly found.
     Includes /mailman, /mailman/admin, /mailman/listinfo and legacy cgi-bin paths.
     Deduplicates while preserving order.
     """
@@ -99,25 +99,19 @@ def _build_candidate_urls(base_url: str) -> List[str]:
         if u and u not in candidates:
             candidates.append(u)
 
-    # 1) Original URL as given
     _push(base_url.rstrip("/"))
-
-    # 2) Root (if path was provided)
     if path:
         _push(root)
 
-    # 3) Determine a mailman base to expand
     if "/mailman" in path:
         mailman_base = path[: path.find("/mailman")] + "/mailman"
     else:
         mailman_base = "/mailman"
 
-    # 4) Add /mailman itself and common subpaths
     _push(urljoin(root + "/", mailman_base.lstrip("/")))
     for suffix in ("admin", "listinfo", "admindb"):
         _push(urljoin(root + "/", f"{mailman_base.strip('/')}/{suffix}"))
 
-    # 5) Legacy cgi-bin path often used by Mailman 2.x
     _push(urljoin(root + "/", "cgi-bin/mailman/listinfo"))
 
     return candidates
@@ -135,6 +129,30 @@ def _normalize_header_location(location: str) -> str:
 
 
 # --------------------------------------------------------------------
+# Clean and normalize version strings
+# --------------------------------------------------------------------
+def _clean_and_normalize(versions: Set[str]) -> Set[str]:
+    """
+    Remove invalid entries (like '.' or empty strings) and normalize semantic versions.
+    Converts versions like '2.2' to '2.2.0' using packaging.version.Version.
+    Keeps non-standard versions if they are meaningful (like 'Mailman 3.x').
+    """
+    cleaned = set()
+    for v in versions:
+        v = v.strip()
+        if not v or v == ".":
+            continue
+        try:
+            # Normalize semantic versions (e.g., 2.2 -> 2.2.0)
+            cleaned.add(str(Version(v)))
+        except InvalidVersion:
+            # Keep non-semantic versions if not generic/unknown
+            if v.lower() not in {"generic", "unknown"}:
+                cleaned.add(v)
+    return cleaned
+
+
+# --------------------------------------------------------------------
 # Core asynchronous version detection logic
 # --------------------------------------------------------------------
 async def detect_version(
@@ -144,8 +162,8 @@ async def detect_version(
 ) -> Dict[str, Union[str, bool, List[str], None]]:
     """
     Detect Mailman version asynchronously by applying fingerprint regexes
-    on target URLs, headers, or body. Filters out invalid/empty strings,
-    but DOES accept versions extracted via generic body/header regexes.
+    on target URLs, headers, or body. Filters out invalid/empty strings
+    and normalizes versions to prevent conflicts.
     """
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
@@ -156,16 +174,13 @@ async def detect_version(
     custom_user_agent = settings.get("user_agent")
     delay = settings.get("delay", 1)
 
-    # Default user-agent list to rotate through if none specified
     user_agents = [custom_user_agent] if custom_user_agent else [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5790.170 Safari/537.36",
     ]
 
-    # Build candidate URLs once (used by 'header' and 'body' methods)
     candidate_urls = _build_candidate_urls(base_url)
-
     found_versions: Set[str] = set()
     ua_index = 0
 
@@ -174,12 +189,9 @@ async def detect_version(
             method = (fp.get("method") or "").lower()
             location = fp.get("location") or ""
             pattern_str = fp.get("pattern")
-            version_label = fp.get("version")  # optional label like "Mailman 3.x" or "Generic"
+            version_label = fp.get("version")
             flags_str = fp.get("flags")
-
             pattern: Optional[Pattern] = _compile_regex(pattern_str, flags_str) if pattern_str else None
-
-            # Rotate User-Agent per request (we'll pass it per call; don't mutate session.headers)
             current_ua = user_agents[ua_index % len(user_agents)]
             ua_index += 1
             req_headers = {
@@ -189,9 +201,6 @@ async def detect_version(
 
             url_to_check = None
             try:
-                # -------------------------------
-                # Method: URL → check specific path content
-                # -------------------------------
                 if method == "url":
                     url_to_check = urljoin(base_url + "/", location.lstrip("/"))
                     async with session.get(url_to_check, headers=req_headers) as response:
@@ -202,28 +211,16 @@ async def detect_version(
                                 if ver:
                                     found_versions.add(ver)
                                     logger.debug(f"[version:url] {url_to_check} -> {ver}")
-                                else:
-                                    logger.debug(f"[version:url] No match at {url_to_check}")
-                            else:
-                                # No regex; trust the label if it's specific (not Generic)
-                                if version_label and version_label.strip().lower() != "generic":
-                                    found_versions.add(version_label.strip())
-                                    logger.debug(f"[version:url] Presence match at {url_to_check} -> {version_label}")
-                                else:
-                                    logger.debug(f"[version:url] Presence at {url_to_check} but no usable version")
-                        else:
-                            logger.debug(f"[version:url] {url_to_check} -> HTTP {response.status}")
+                            elif version_label and version_label.strip().lower() != "generic":
+                                found_versions.add(version_label.strip())
 
-                # -------------------------------
-                # Method: HEADER → check HTTP headers for version
-                # -------------------------------
                 elif method == "header":
                     header_name = _normalize_header_location(location)
                     matched = False
                     for u in candidate_urls:
                         url_to_check = u
                         async with session.get(u, headers=req_headers) as response:
-                            if 200 <= response.status < 400:  # allow redirects too
+                            if 200 <= response.status < 400:
                                 header_val = response.headers.get(header_name)
                                 if not header_val:
                                     continue
@@ -232,27 +229,20 @@ async def detect_version(
                                     if ver:
                                         found_versions.add(ver)
                                         matched = True
-                                        logger.debug(f"[version:header] {u} '{header_name}': {header_val} -> {ver}")
                                         break
                                 else:
-                                    # If no regex, accept header value as-is only if not a generic label
                                     hv = header_val.strip()
                                     if hv and (not version_label or version_label.strip().lower() == "generic"):
                                         found_versions.add(hv)
                                         matched = True
-                                        logger.debug(f"[version:header] {u} '{header_name}' -> {hv}")
                                         break
                                     elif version_label and version_label.strip().lower() != "generic":
                                         found_versions.add(version_label.strip())
                                         matched = True
-                                        logger.debug(f"[version:header] {u} '{header_name}' label -> {version_label}")
                                         break
                     if not matched:
                         logger.debug(f"[version:header] No header match for '{header_name}' on candidates")
 
-                # -------------------------------
-                # Method: BODY → check HTML/text content for version
-                # -------------------------------
                 elif method == "body":
                     if not pattern:
                         logger.debug("[version:body] Skipping entry without pattern.")
@@ -263,15 +253,13 @@ async def detect_version(
                             async with session.get(u, headers=req_headers) as response:
                                 if 200 <= response.status < 400:
                                     content_type = response.headers.get("Content-Type", "").lower()
-                                    # Be permissive: treat missing content-type as text
                                     if ("text" in content_type) or (content_type == ""):
                                         content = await response.text()
-                                        content = content[:100_000]  # cap for performance
+                                        content = content[:100_000]
                                         ver = extract_version_from_text(content, pattern)
                                         if ver:
                                             found_versions.add(ver)
                                             matched = True
-                                            logger.debug(f"[version:body] {u} -> {ver}")
                                             break
                         if not matched:
                             logger.debug("[version:body] No match across candidate URLs")
@@ -282,11 +270,13 @@ async def detect_version(
             except Exception as e:
                 logger.error(f"Error during fingerprint scan at {url_to_check or 'N/A'}: {e}")
 
-            await sleep(delay)  # polite delay between requests
+            await sleep(delay)
 
-    # ------------------------------------------------
-    # Final version detection results
-    # ------------------------------------------------
+    # ----------------------------------------------------------------
+    # Clean and normalize collected versions before returning
+    # ----------------------------------------------------------------
+    found_versions = _clean_and_normalize(found_versions)
+
     if not found_versions:
         logger.info("No valid Mailman version detected.")
         return {"version": None}
@@ -298,7 +288,7 @@ async def detect_version(
 
     logger.warning(f"Version conflict detected. Multiple versions found: {found_versions}")
     return {"conflict": True, "versions": sorted(found_versions)}
-    
+
 
 # --------------------------------------------------------------------
 # API function for external usage

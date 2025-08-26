@@ -61,8 +61,7 @@ def _compile_regex(pattern_str: str, flags_str: Optional[str]) -> Pattern:
                 flags |= MULTILINE
             elif ch == "s":
                 flags |= DOTALL
-    # default IGNORECASE for robustness
-    flags |= IGNORECASE
+    flags |= IGNORECASE  # default IGNORECASE for robustness
     return re_compile(pattern_str, flags)
 
 
@@ -86,7 +85,6 @@ def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
 def _build_candidate_urls(base_url: str) -> List[str]:
     """
     Build a list of plausible URLs where Mailman version strings are commonly found.
-    Includes /mailman, /mailman/admin, /mailman/listinfo and legacy cgi-bin paths.
     Deduplicates while preserving order.
     """
     parsed = urlparse(base_url)
@@ -133,9 +131,9 @@ def _normalize_header_location(location: str) -> str:
 # --------------------------------------------------------------------
 def _clean_and_normalize(versions: Set[str]) -> Set[str]:
     """
-    Remove invalid entries (like '.' or empty strings) and normalize semantic versions.
-    Converts versions like '2.2' to '2.2.0' using packaging.version.Version.
-    Keeps non-standard versions if they are meaningful (like 'Mailman 3.x').
+    Remove invalid entries and normalize semantic versions.
+    Converts versions like '2.2' to '2.2.0'.
+    Keeps non-standard versions if meaningful.
     """
     cleaned = set()
     for v in versions:
@@ -143,10 +141,14 @@ def _clean_and_normalize(versions: Set[str]) -> Set[str]:
         if not v or v == ".":
             continue
         try:
-            # Normalize semantic versions (e.g., 2.2 -> 2.2.0)
-            cleaned.add(str(Version(v)))
+            ver_obj = Version(v)
+            # Ensure full semantic version: major.minor.patch
+            major = ver_obj.release[0]
+            minor = ver_obj.release[1] if len(ver_obj.release) > 1 else 0
+            patch = ver_obj.release[2] if len(ver_obj.release) > 2 else 0
+            normalized = f"{major}.{minor}.{patch}"
+            cleaned.add(normalized)
         except InvalidVersion:
-            # Keep non-semantic versions if not generic/unknown
             if v.lower() not in {"generic", "unknown"}:
                 cleaned.add(v)
     return cleaned
@@ -161,7 +163,7 @@ async def detect_version(
     fingerprints: List[Dict]
 ) -> Dict[str, Union[str, bool, List[str], None]]:
     """
-    Detect Mailman version asynchronously by applying fingerprint regexes
+    Detect Mailman version asynchronously using fingerprint regexes
     on target URLs, headers, or body. Filters out invalid/empty strings
     and normalizes versions to prevent conflicts.
     """

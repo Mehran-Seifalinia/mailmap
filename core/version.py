@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from typing import Optional, Dict, Set, List, Union
 from json import load as json_load
 from logging import getLogger
-from asyncio import sleep
+from asyncio import sleep, gather
 from core.utils import create_session  # async context manager returning aiohttp.ClientSession
 from packaging.version import Version, InvalidVersion
 
@@ -80,7 +80,7 @@ def extract_version_from_text(text: str, pattern: Pattern) -> Optional[str]:
 
 
 # --------------------------------------------------------------------
-# URL candidate builder
+# Build candidate URLs for version checking
 # --------------------------------------------------------------------
 def _build_candidate_urls(base_url: str) -> List[str]:
     """
@@ -142,7 +142,6 @@ def _clean_and_normalize(versions: Set[str]) -> Set[str]:
             continue
         try:
             ver_obj = Version(v)
-            # Ensure full semantic version: major.minor.patch
             major = ver_obj.release[0]
             minor = ver_obj.release[1] if len(ver_obj.release) > 1 else 0
             patch = ver_obj.release[2] if len(ver_obj.release) > 2 else 0
@@ -155,7 +154,28 @@ def _clean_and_normalize(versions: Set[str]) -> Set[str]:
 
 
 # --------------------------------------------------------------------
-# Core asynchronous version detection logic
+# Async HTTP fetch with caching
+# --------------------------------------------------------------------
+async def _fetch_url(session, url: str, headers: Dict[str, str], cache: Dict[str, str]) -> Optional[str]:
+    """
+    Fetch the content of a URL using aiohttp session.
+    Use cache to avoid multiple requests for same URL.
+    """
+    if url in cache:
+        return cache[url]
+    try:
+        async with session.get(url, headers=headers) as resp:
+            if 200 <= resp.status < 400:
+                text = await resp.text()
+                cache[url] = text
+                return text
+    except Exception as e:
+        logger.debug(f"Request failed for {url}: {e}")
+    return None
+
+
+# --------------------------------------------------------------------
+# Core asynchronous version detection logic (parallelized)
 # --------------------------------------------------------------------
 async def detect_version(
     base_url: str,
@@ -167,6 +187,7 @@ async def detect_version(
     on target URLs, headers, or body. Filters out invalid/empty strings
     and normalizes versions to prevent conflicts.
     """
+
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
         return {"error": "Invalid URL format. Must start with http:// or https:// and include a domain."}
@@ -174,7 +195,7 @@ async def detect_version(
     timeout = settings.get("timeout", 5)
     proxy = settings.get("proxy")
     custom_user_agent = settings.get("user_agent")
-    delay = settings.get("delay", 1)
+    delay = settings.get("delay", 0)  # set to 0 for speed; minimal delay
 
     user_agents = [custom_user_agent] if custom_user_agent else [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -185,8 +206,12 @@ async def detect_version(
     candidate_urls = _build_candidate_urls(base_url)
     found_versions: Set[str] = set()
     ua_index = 0
+    url_cache: Dict[str, str] = {}  # cache responses to avoid duplicate requests
 
     async with create_session(user_agent=custom_user_agent, proxy=proxy, timeout=timeout) as session:
+        tasks = []
+
+        # Build all fetch tasks for headers and body fingerprints
         for fp in fingerprints:
             method = (fp.get("method") or "").lower()
             location = fp.get("location") or ""
@@ -201,82 +226,67 @@ async def detect_version(
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             }
 
-            url_to_check = None
-            try:
-                if method == "url":
-                    url_to_check = urljoin(base_url + "/", location.lstrip("/"))
-                    async with session.get(url_to_check, headers=req_headers) as response:
-                        if response.status == 200:
-                            text = await response.text()
-                            if pattern:
-                                ver = extract_version_from_text(text, pattern)
-                                if ver:
-                                    found_versions.add(ver)
-                                    logger.debug(f"[version:url] {url_to_check} -> {ver}")
-                            elif version_label and version_label.strip().lower() != "generic":
-                                found_versions.add(version_label.strip())
+            if method == "url":
+                url_to_check = urljoin(base_url + "/", location.lstrip("/"))
+                tasks.append((_fetch_url(session, url_to_check, req_headers, url_cache), pattern, version_label, "url"))
 
-                elif method == "header":
-                    header_name = _normalize_header_location(location)
-                    matched = False
-                    for u in candidate_urls:
-                        url_to_check = u
-                        async with session.get(u, headers=req_headers) as response:
-                            if 200 <= response.status < 400:
-                                header_val = response.headers.get(header_name)
-                                if not header_val:
-                                    continue
-                                if pattern:
-                                    ver = extract_version_from_text(header_val, pattern)
-                                    if ver:
-                                        found_versions.add(ver)
-                                        matched = True
-                                        break
-                                else:
-                                    hv = header_val.strip()
-                                    if hv and (not version_label or version_label.strip().lower() == "generic"):
-                                        found_versions.add(hv)
-                                        matched = True
-                                        break
-                                    elif version_label and version_label.strip().lower() != "generic":
-                                        found_versions.add(version_label.strip())
-                                        matched = True
-                                        break
-                    if not matched:
-                        logger.debug(f"[version:header] No header match for '{header_name}' on candidates")
+            elif method in ("header", "body"):
+                for u in candidate_urls:
+                    tasks.append((_fetch_url(session, u, req_headers, url_cache), pattern, version_label, method, u, location))
 
-                elif method == "body":
-                    if not pattern:
-                        logger.debug("[version:body] Skipping entry without pattern.")
+        # Execute all fetches in parallel
+        results = await gather(*[t[0] for t in tasks])
+
+        # Process fetched results
+        for i, task in enumerate(tasks):
+            content = results[i]
+            if not content:
+                continue
+
+            fp_data = task
+            method = fp_data[3]
+
+            if method == "url":
+                pattern = fp_data[1]
+                version_label = fp_data[2]
+                if pattern:
+                    ver = extract_version_from_text(content, pattern)
+                    if ver:
+                        found_versions.add(ver)
+                        logger.debug(f"[version:url] Found: {ver}")
+                elif version_label and version_label.strip().lower() != "generic":
+                    found_versions.add(version_label.strip())
+
+            elif method == "header":
+                pattern = fp_data[1]
+                version_label = fp_data[2]
+                url_checked = fp_data[4]
+                header_name = _normalize_header_location(fp_data[5])
+                header_val = None
+                try:
+                    header_val = session._response_headers(url_checked).get(header_name)
+                except Exception:
+                    header_val = None
+                if header_val:
+                    if pattern:
+                        ver = extract_version_from_text(header_val, pattern)
+                        if ver:
+                            found_versions.add(ver)
                     else:
-                        matched = False
-                        for u in candidate_urls:
-                            url_to_check = u
-                            async with session.get(u, headers=req_headers) as response:
-                                if 200 <= response.status < 400:
-                                    content_type = response.headers.get("Content-Type", "").lower()
-                                    if ("text" in content_type) or (content_type == ""):
-                                        content = await response.text()
-                                        content = content[:100_000]
-                                        ver = extract_version_from_text(content, pattern)
-                                        if ver:
-                                            found_versions.add(ver)
-                                            matched = True
-                                            break
-                        if not matched:
-                            logger.debug("[version:body] No match across candidate URLs")
+                        hv = header_val.strip()
+                        if hv and (not version_label or version_label.strip().lower() == "generic"):
+                            found_versions.add(hv)
+                        elif version_label and version_label.strip().lower() != "generic":
+                            found_versions.add(version_label.strip())
 
-                else:
-                    logger.debug(f"[version] Unknown method '{method}' in fingerprint; skipping.")
+            elif method == "body":
+                pattern = fp_data[1]
+                if pattern:
+                    ver = extract_version_from_text(content[:100_000], pattern)
+                    if ver:
+                        found_versions.add(ver)
 
-            except Exception as e:
-                logger.error(f"Error during fingerprint scan at {url_to_check or 'N/A'}: {e}")
-
-            await sleep(delay)
-
-    # ----------------------------------------------------------------
-    # Clean and normalize collected versions before returning
-    # ----------------------------------------------------------------
+    # Clean and normalize all collected versions
     found_versions = _clean_and_normalize(found_versions)
 
     if not found_versions:
@@ -325,7 +335,7 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=5, help="HTTP timeout in seconds")
     parser.add_argument("--proxy", help="Proxy URL (optional)")
     parser.add_argument("--user-agent", help="Custom User-Agent string (optional)")
-    parser.add_argument("--delay", type=float, default=0.5, help="Delay between requests in seconds")
+    parser.add_argument("--delay", type=float, default=0, help="Delay between requests in seconds (minimal recommended)")
     parser.add_argument("--fingerprints", default="data/fingerprints_version.json",
                         help="Path to fingerprints JSON file")
 

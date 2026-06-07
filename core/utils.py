@@ -1,8 +1,8 @@
 from os import makedirs, path
 from asyncio import TimeoutError as AsyncTimeoutError
-from typing import Optional, Dict, Any, Union
+from typing import AsyncGenerator, Optional, Dict, Any, Union
 from json import load, dump, JSONDecodeError
-from logging import getLogger, Logger, basicConfig, INFO, DEBUG, WARNING, ERROR
+from logging import getLogger, Logger, basicConfig, INFO, DEBUG
 from contextlib import asynccontextmanager
 
 from rich.logging import RichHandler
@@ -69,24 +69,28 @@ def _create_connector(proxy: Optional[str]) -> Optional[object]:
     This keeps behavior explicit and predictable across methods.
     """
     if not proxy:
-        logger.debug("No proxy provided; using default TCPConnector.") if VERBOSE else None
+        if VERBOSE:
+            logger.debug("No proxy provided; using default TCPConnector.")
         return None
 
     proxy_lower = proxy.lower()
     try:
         if proxy_lower.startswith(("socks5://", "socks4://", "socks5h://")):
-            logger.debug(f"Using SOCKS proxy via connector: {proxy}") if VERBOSE else None
+            if VERBOSE:
+                logger.debug(f"Using SOCKS proxy via connector: {proxy}")
             return ProxyConnector.from_url(proxy)
 
         if proxy_lower.startswith(("http://", "https://")):
-            # aiohttp expects HTTP/HTTPS proxies per-request via `proxy=` parameter
-            logger.debug("HTTP/HTTPS proxy detected; will pass via request 'proxy=' param.") if VERBOSE else None
+            if VERBOSE:
+                logger.debug("HTTP/HTTPS proxy detected; will pass via request 'proxy=' param.")
             return None
 
         # Unsupported scheme
         msg = f"Unsupported proxy scheme: {proxy}"
-        logger.warning(msg) if VERBOSE else logger.debug(msg)
-        return None
+        if VERBOSE:
+            logger.warning(msg)
+        else:
+            logger.debug(msg)
 
     except Exception as e:
         # Connector build failure is noteworthy even in quiet mode
@@ -105,7 +109,7 @@ async def create_session(
     proxy: Optional[str] = None,
     timeout: int = 10,
     verify_ssl: bool = True,
-) -> ClientSession:
+) -> AsyncGenerator[ClientSession, None]:
     """
     Async context manager that creates and cleans up an aiohttp ClientSession.
 
@@ -129,7 +133,8 @@ async def create_session(
     session: Optional[ClientSession] = None
     try:
         session = ClientSession(headers=session_headers, connector=connector, timeout=timeout_obj)
-        logger.debug("ClientSession created successfully.") if VERBOSE else None
+        if VERBOSE:
+            logger.debug("ClientSession created successfully.")
         yield session
     except Exception as e:
         # Session creation failure is critical; always log as error
@@ -140,7 +145,8 @@ async def create_session(
     finally:
         if session and not session.closed:
             await session.close()
-            logger.debug("ClientSession closed.") if VERBOSE else None
+            if VERBOSE:
+                logger.debug("ClientSession closed.")
 
 
 # ============================================================
@@ -342,4 +348,4 @@ def write_json_file(filepath: str, data: Any) -> bool:
         return True
     except Exception as e:
         logger.error(f"Failed to write JSON file {filepath}: {e}")
-        return Fals
+        return False

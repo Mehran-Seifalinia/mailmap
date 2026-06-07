@@ -1,12 +1,12 @@
 from json import load as json_load
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from requests import Session, RequestException, head, get
+from requests import Session, RequestException
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 from urllib.parse import urljoin, urlparse
 from time import sleep
 from random import choice, uniform
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from urllib3 import disable_warnings, exceptions as urllib3_exceptions
 from re import compile as re_compile, IGNORECASE
 from sys import exit as sys_exit
@@ -103,28 +103,24 @@ def load_common_paths(filepath: str, version: str = "v2") -> List[Dict[str, Any]
 # -----------------------------------------------------------
 # Create per-thread HTTP session
 # -----------------------------------------------------------
-def _get_thread_session(timeout: int = DEFAULT_TIMEOUT) -> Session:
-    """Return a thread-local session with retries disabled."""
-    if getattr(_thread_local, "session", None) is None:
+def _get_thread_session(proxy: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT) -> Session:
+    """Return a thread-local session with proxy support."""
+    current_proxy = getattr(_thread_local, "proxy", None)
+    if getattr(_thread_local, "session", None) is None or current_proxy != proxy:
         s = Session()
-        retry = Retry(
-            total=DEFAULT_RETRIES,  # disable retries
-            backoff_factor=0,
-            status_forcelist=[]
-        )
-        # Set allowed methods for retry object (for older urllib3)
-        try:
-            retry.allowed_methods = frozenset(["HEAD", "GET", "OPTIONS"])
-        except Exception:
-            try:
-                retry.method_whitelist = frozenset(["HEAD", "GET", "OPTIONS"])
-            except Exception:
-                pass
+        if proxy:
+            proxies = {
+                "http": proxy,
+                "https": proxy,
+            }
+            s.proxies.update(proxies)
+        retry = Retry(total=DEFAULT_RETRIES, backoff_factor=0, status_forcelist=[])
         adapter = HTTPAdapter(max_retries=retry)
         s.mount("https://", adapter)
         s.mount("http://", adapter)
         s.headers.update({"User-Agent": choice(USER_AGENTS)})
         _thread_local.session = s
+        _thread_local.proxy = proxy
     return _thread_local.session
 
 # -----------------------------------------------------------
@@ -135,7 +131,8 @@ def _check_single_path(
     item: Dict[str, Any],
     timeout: float,
     request_delay: float,
-    max_content_bytes: int
+    max_content_bytes: int,
+    proxy: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Check a single URL path for Mailman presence and return result dict."""
     path = item.get("path")
@@ -143,7 +140,7 @@ def _check_single_path(
         return {"error": "missing_path_key", "detail": "Entry did not include 'path' key."}
 
     full_url = urljoin(base_url + "/", path.lstrip("/"))
-    session = _get_thread_session()
+    session = _get_thread_session(proxy=proxy, timeout=timeout)
     sleep(uniform(0, request_delay))  # random delay to avoid detection
 
     try:
@@ -224,7 +221,8 @@ def check_paths(
     request_delay: float = DEFAULT_REQUEST_DELAY,
     verbose: bool = False,
     max_workers: int = DEFAULT_MAX_WORKERS,
-    max_content_bytes: int = DEFAULT_MAX_CONTENT_BYTES
+    max_content_bytes: int = DEFAULT_MAX_CONTENT_BYTES,
+    proxy: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Scan a list of paths concurrently and return results."""
     configure_logger(verbose)
@@ -261,7 +259,8 @@ def check_paths(
                 item,
                 timeout,
                 request_delay,
-                max_content_bytes
+                max_content_bytes,
+                proxy
             ): item for item in sanitized_paths
         }
         for future in as_completed(future_to_item):

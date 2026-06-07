@@ -6,6 +6,7 @@ from rich.traceback import install
 from core import detector, version, paths
 from core.cve_scanner import CVEScanner
 from output.report_generator import ReportGenerator
+from asyncio import to_thread
 
 install(show_locals=False)
 
@@ -112,8 +113,6 @@ async def run_scan(
     Returns:
         None
     """
-    delay = settings.get('delay', 0)
-    settings['delay'] = delay
 
     try:
         mailman_found = False
@@ -121,9 +120,11 @@ async def run_scan(
         version_info = {}
         path_results = []
         cve_results = []
+        detection_performed = False
 
         # Step 1: Mailman detection (async)
         if scan_part in ("detector", "full"):
+            detection_performed = True  # NEW
             result = await detector.check_mailman(target, settings)
             mailman_found = result.get("found", False)
             details = result
@@ -132,13 +133,21 @@ async def run_scan(
                 report_data = {
                     'mailman_found': False,
                     'details': details,
-                    'version': None,
+                    'version': {},
                     'paths': [],
-                    'cves': [],
-                    'message': 'Mailman not found on target.'
+                    'cves': []
                 }
                 if output_file:
-                    ReportGenerator.save_report(output_file, output_format, report_data)
+                    # Use consistent report generation
+                    rg = ReportGenerator(output_dir=path.dirname(output_file) if output_file else "output")
+                    if output_format == 'json':
+                        rg.generate_json(report_data, filename=path.basename(output_file))
+                    elif output_format == 'html':
+                        rg.generate_html(report_data, filename=path.basename(output_file))
+                    elif output_format == 'md':
+                        rg.generate_markdown(report_data, filename=path.basename(output_file))
+                    else:
+                        console.print(f"[yellow]Unsupported format: {output_format}[/yellow]")
                     console.print(f"[bold green][+] Report saved to {output_file}[/bold green]")
                 return
 
@@ -165,7 +174,9 @@ async def run_scan(
         # Step 3: Sensitive paths scanning (sync)
         if scan_part in ("paths", "full"):
             common_paths = load_common_paths(settings.get('paths', 'data/common_paths.json'))
-            path_results = paths.check_paths(
+            # Run blocking check_paths in a thread to avoid blocking event loop
+            path_results = await to_thread(
+                paths.check_paths,
                 target,
                 common_paths,
                 timeout=settings.get('timeout', 5),
@@ -175,25 +186,34 @@ async def run_scan(
             )
             # Count and filter
             high_med = []
-            low_count = 0
+            low_items = []
             for item in path_results:
                 sev = item.get("severity", "unknown")
                 if sev in ("high", "medium"):
                     high_med.append(item)
                 else:
-                    low_count += 1
+                    low_items.append(item)
             # Print high/medium
             for item in high_med:
                 sev = item.get("severity", "unknown")
                 desc = item.get("description", "Unknown")
                 console.print(f"[{severity_color(sev)}][!] Found:[/] {desc} - {item.get('path', 'N/A')} - Severity: {sev}")
-            if low_count:
-                console.print(f"[dim][!] Plus {low_count} low-severity paths (use --verbose to see all)[/dim]")
+            # Print low severity if verbose or just count
+            verbose_flag = settings.get('verbose', False)
+            if low_items:
+                if verbose_flag:
+                    for item in low_items:
+                        sev = item.get("severity", "low")
+                        desc = item.get("description", "Unknown")
+                        console.print(f"[{severity_color(sev)}][!] Found:[/] {desc} - {item.get('path', 'N/A')} - Severity: {sev}")
+                else:
+                    console.print(f"[dim][!] Plus {len(low_items)} low-severity paths (use --verbose to see all)[/dim]")
 
         # Step 4: CVE scanning (sync)
         if scan_part in ("cve", "full"):
             ver_str = version_info.get("version") if isinstance(version_info, dict) else None
-            cve_scanner_obj = CVEScanner(cve_data_path="data/cves.json")
+            cve_data_path = settings.get('cve_data_path', 'data/cves.json')
+            cve_scanner_obj = CVEScanner(cve_data_path=cve_data_path)
             cve_results = await cve_scanner_obj.scan(
                 detected_version=ver_str if is_valid_version(ver_str) else None,
                 base_url=target,
@@ -208,6 +228,13 @@ async def run_scan(
 
         # Step 5: Save report
         if output_file:
+            # Determine mailman_found if detection was not performed
+            if not detection_performed:
+                # If we have version or paths or cves, assume mailman exists
+                has_version = isinstance(version_info, dict) and version_info.get("version") and is_valid_version(version_info.get("version"))
+                has_paths = len(path_results) > 0
+                has_cves = len(cve_results) > 0
+                mailman_found = has_version or has_paths or has_cves
             report_data = {
                 'mailman_found': mailman_found,
                 'details': details,

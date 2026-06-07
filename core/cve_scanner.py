@@ -179,10 +179,9 @@ class CVEScanner:
 
         # Parse CVSS score safely
         try:
-            cvss = float(cvss_raw)
+            cvss = float(cvss_raw) if cvss_raw is not None else 0.0
         except (ValueError, TypeError):
             cvss = 0.0
-            print_warning(f"Invalid CVSS format in CVE {cve_id}: {cvss_raw}")
 
         severity = get_cvss_severity(cvss)
 

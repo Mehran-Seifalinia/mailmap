@@ -165,7 +165,14 @@ async def run_scan(
         # Step 3: Sensitive paths scanning (sync)
         if scan_part in ("paths", "full"):
             common_paths = load_common_paths(settings.get('paths', 'data/common_paths.json'))
-            path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
+            path_results = paths.check_paths(
+                target,
+                common_paths,
+                timeout=settings.get('timeout', 5),
+                request_delay=settings.get('delay', 0),
+                proxy=settings.get('proxy'),
+                verbose=settings.get('verbose', False)
+            )
             for item in path_results:
                 sev = item.get("severity", "unknown")
                 desc = item.get("description", "Unknown")

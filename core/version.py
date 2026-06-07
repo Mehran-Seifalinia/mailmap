@@ -271,8 +271,19 @@ async def detect_version(
         ver = next(iter(found_versions))
         logger.info(f"Detected Mailman version: {ver}")
         return {"version": ver}
-    logger.warning(f"Version conflict: {found_versions}")
-    return {"conflict": True, "versions": sorted(found_versions)}
+    # Version conflict: pick the highest version using packaging.version
+    from packaging.version import Version, InvalidVersion
+    valid_versions = []
+    for v in found_versions:
+        try:
+            valid_versions.append((Version(v), v))
+        except InvalidVersion:
+            # Keep non-semver as fallback, but lower priority
+            valid_versions.append((Version("0"), v))
+    valid_versions.sort(key=lambda x: x[0])
+    highest = valid_versions[-1][1]
+    logger.warning(f"Version conflict: {found_versions}. Using highest: {highest}")
+    return {"version": highest, "conflict_detected": True, "all_versions": sorted(found_versions)}
 
 
 # --------------------------------------------------------------------

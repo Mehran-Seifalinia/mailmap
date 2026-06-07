@@ -173,10 +173,22 @@ async def run_scan(
                 proxy=settings.get('proxy'),
                 verbose=settings.get('verbose', False)
             )
+            # Count and filter
+            high_med = []
+            low_count = 0
             for item in path_results:
+                sev = item.get("severity", "unknown")
+                if sev in ("high", "medium"):
+                    high_med.append(item)
+                else:
+                    low_count += 1
+            # Print high/medium
+            for item in high_med:
                 sev = item.get("severity", "unknown")
                 desc = item.get("description", "Unknown")
                 console.print(f"[{severity_color(sev)}][!] Found:[/] {desc} - {item.get('path', 'N/A')} - Severity: {sev}")
+            if low_count:
+                console.print(f"[dim][!] Plus {low_count} low-severity paths (use --verbose to see all)[/dim]")
 
         # Step 4: CVE scanning (sync)
         if scan_part in ("cve", "full"):

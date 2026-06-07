@@ -5,7 +5,7 @@ from re import search, IGNORECASE
 from logging import getLogger
 from colorama import init as colorama_init, Fore, Style
 from asyncio import gather
-from aiohttp import ClientSession, ClientConnectorError
+from aiohttp import ClientSession, ClientConnectorError, TCPConnector
 from urllib.parse import urljoin
 
 from core.utils import read_json_file, log_error
@@ -80,6 +80,7 @@ class CVEScanner:
         evidence_regex: Optional[str] = None,
         expected_status: int = 200,
         timeout: int = 10,
+        proxy_param: Optional[str] = None
     ) -> Tuple[bool, str]:
         """
         Perform a single HTTP test to check vulnerability.
@@ -104,7 +105,8 @@ class CVEScanner:
                 url,
                 headers=headers,
                 json=payload if method == "POST" else None,
-                timeout=timeout
+                timeout=timeout,
+                proxy=proxy_param,
             ) as response:
 
                 # Check HTTP status code
@@ -142,7 +144,8 @@ class CVEScanner:
         cve: Dict[str, Any],
         detected_version: Optional[str],
         base_url: Optional[str],
-        timeout: int
+        timeout: int,
+        proxy_param: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Scan a single CVE entry against the target.
@@ -241,7 +244,9 @@ class CVEScanner:
 
         # Perform the test if URL is available
         if url:
-            test_passed, reason = await self.perform_test(session, method, url, headers, payload, evidence_regex, expected_status, timeout)
+            test_passed, reason = await self.perform_test(
+                session, method, url, headers, payload, evidence_regex, expected_status, timeout, proxy_param
+            )
             return {
                 "id": cve_id,
                 "description": description,
@@ -264,23 +269,28 @@ class CVEScanner:
         self,
         detected_version: Optional[str] = None,
         base_url: Optional[str] = None,
-        timeout: int = 10
+        timeout: int = 10,
+        proxy: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        Run scan on all loaded CVEs asynchronously.
-        Args:
-            detected_version (Optional[str]): Detected software version to filter CVEs.
-            base_url (Optional[str]): Target base URL.
-            timeout (int): Request timeout.
-        Returns:
-            List of dictionaries containing CVE scan results.
-        Raises:
-            CVEScannerException on network or unexpected errors.
-        """
         try:
-            async with ClientSession() as session:
+            connector = None
+            proxy_param = None
+            if proxy:
+                proxy_lower = proxy.lower()
+                if proxy_lower.startswith(("socks5://", "socks4://", "socks5h://")):
+                    from aiohttp_socks import ProxyConnector
+                    connector = ProxyConnector.from_url(proxy)
+                elif proxy_lower.startswith(("http://", "https://")):
+                    proxy_param = proxy
+                    connector = TCPConnector()
+                else:
+                    connector = TCPConnector()
+            else:
+                connector = TCPConnector()
+
+            async with ClientSession(connector=connector) as session:
                 tasks = [
-                    self.scan_single(session, cve, detected_version, base_url, timeout)
+                    self.scan_single(session, cve, detected_version, base_url, timeout, proxy_param)
                     for cve in self.cves
                 ]
                 return await gather(*tasks)

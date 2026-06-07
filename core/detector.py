@@ -15,7 +15,7 @@ from re import compile as re_compile, IGNORECASE, Pattern, Match, search
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
-from aiohttp import ClientSession, ClientTimeout, ClientResponseError
+from aiohttp import ClientSession, ClientTimeout, ClientResponseError, TCPConnector
 from rich.console import Console
 from rich.logging import RichHandler
 from argparse import ArgumentParser
@@ -231,6 +231,7 @@ async def fetch_and_check(
     timeout: int,
     verbose: bool,
     semaphore: Semaphore,
+    proxy_param: Optional[str] = None,
 ) -> Optional[Dict]:
     """
     Fetch URL (base_url + path) and check all fingerprints against the response.
@@ -253,7 +254,7 @@ async def fetch_and_check(
 
     try:
         async with semaphore:
-            async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
+            async with session.get(url, timeout=timeout, allow_redirects=True, proxy=proxy_param) as resp:
                 if verbose:
                     logger.info(f"Got status {resp.status} from {url}")
 
@@ -294,6 +295,7 @@ async def detect_mailman_async(
     fingerprints: List[Dict],
     timeout: int = 5,
     verbose: bool = False,
+    proxy: Optional[str] = None,
 ) -> Dict:
     """
     Asynchronously detect Mailman installation by checking multiple paths with fingerprints.
@@ -314,11 +316,26 @@ async def detect_mailman_async(
     compiled_fps = compile_fingerprints(fingerprints)
     headers = {"User-Agent": "MailmapScanner/2.0"}
     timeout_obj = ClientTimeout(total=timeout)
-    semaphore = Semaphore(10)  # Limit concurrency
+    semaphore = Semaphore(10)
 
-    async with ClientSession(headers=headers, timeout=timeout_obj) as session:
+    connector = None
+    proxy_param = None  # برای HTTP/HTTPS در هر درخواست
+    if proxy:
+        proxy_lower = proxy.lower()
+        if proxy_lower.startswith(("socks5://", "socks4://", "socks5h://")):
+            from aiohttp_socks import ProxyConnector
+            connector = ProxyConnector.from_url(proxy)
+        elif proxy_lower.startswith(("http://", "https://")):
+            proxy_param = proxy
+            connector = TCPConnector()
+        else:
+            connector = TCPConnector()
+    else:
+        connector = TCPConnector()
+
+    async with ClientSession(headers=headers, timeout=timeout_obj, connector=connector) as session:
         tasks = [
-            create_task(fetch_and_check(session, base_url, path, compiled_fps, timeout, verbose, semaphore))
+            create_task(fetch_and_check(session, base_url, path, compiled_fps, timeout, verbose, semaphore, proxy_param))
             for path in paths
         ]
 
@@ -376,8 +393,8 @@ async def check_mailman(base_url: str, settings: Dict) -> Dict:
         fingerprints,
         timeout=settings.get("timeout", 5),
         verbose=settings.get("verbose", False),
+        proxy=settings.get("proxy"),
     )
-
     return result
 
 

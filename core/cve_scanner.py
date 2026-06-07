@@ -175,8 +175,13 @@ class CVEScanner:
             }
 
         affected_versions = cve.get("affected_versions", [])
-        affected_versions_str = ",".join(affected_versions) if isinstance(affected_versions, list) else str(affected_versions)
-
+        if not affected_versions:
+            return {
+                "id": cve_id,
+                "status": "skipped",
+                "reason": "No affected versions specified",
+            }
+        
         # Parse CVSS score safely
         try:
             cvss = float(cvss_raw) if cvss_raw is not None else 0.0
@@ -184,18 +189,17 @@ class CVEScanner:
             cvss = 0.0
 
         severity = get_cvss_severity(cvss)
+        spec_parts = []
+        for v in affected_versions:
+            v = v.strip()
+            if v.startswith((">=", "<=", ">", "<", "==", "!=")):
+                spec_parts.append(v)
+            else:
+                spec_parts.append(f"=={v}")
+        affected_versions_str = ",".join(spec_parts)
 
         # Skip CVE if detected version not in affected range
         if detected_version:
-            if not affected_versions:
-                return {
-                    "id": cve_id,
-                    "description": description,
-                    "cvss": cvss,
-                    "severity": severity,
-                    "status": "skipped",
-                    "reason": "No affected versions specified",
-                }
             try:
                 ver = Version(detected_version)
                 spec_set = SpecifierSet(affected_versions_str)
@@ -206,15 +210,13 @@ class CVEScanner:
                         "cvss": cvss,
                         "severity": severity,
                         "status": "skipped",
-                        "reason": "Version not affected",
+                        "reason": f"Version {detected_version} not affected (needs {affected_versions_str})",
                     }
             except (InvalidVersion, InvalidSpecifier) as e:
-                log_error(f"Version check failed for CVE {cve_id}: {e}")
+                # Log as debug, not error
+                logger.debug(f"Version check failed for CVE {cve_id}: {e}")
                 return {
                     "id": cve_id,
-                    "description": description,
-                    "cvss": cvss,
-                    "severity": severity,
                     "status": "skipped",
                     "reason": f"Invalid version specifier: {e}",
                 }

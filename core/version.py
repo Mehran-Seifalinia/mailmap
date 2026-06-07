@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from typing import Optional, Dict, Set, List, Union
 from json import load as json_load
 from logging import getLogger
-from core.utils import create_session  # async context manager returning aiohttp.ClientSession
+from aiohttp import TCPConnector, ClientTimeout, ClientSession
 from packaging.version import Version, InvalidVersion
 
 logger = getLogger("mailmap")
@@ -181,7 +181,6 @@ async def detect_version(
     settings: Dict[str, Union[str, int, float]],
     fingerprints: List[Dict]
 ) -> Dict[str, Union[str, bool, List[str], None]]:
-    """Detect Mailman version asynchronously using fingerprints."""
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
         return {"error": "Invalid URL format"}
@@ -192,12 +191,29 @@ async def detect_version(
 
     candidate_urls = _build_candidate_urls(base_url)
     found_versions = set()
+    connector = None
+    proxy_param = None
+    if proxy:
+        proxy_lower = proxy.lower()
+        if proxy_lower.startswith(("socks5://", "socks4://", "socks5h://")):
+            from aiohttp_socks import ProxyConnector
+            connector = ProxyConnector.from_url(proxy)
+        elif proxy_lower.startswith(("http://", "https://")):
+            proxy_param = proxy
+            connector = TCPConnector()
+        else:
+            connector = TCPConnector()
+    else:
+        connector = TCPConnector()
 
-    async with create_session(user_agent=user_agent, proxy=proxy, timeout=timeout) as session:
+    headers = {"User-Agent": user_agent}
+    timeout_obj = ClientTimeout(total=timeout)
+
+    async with ClientSession(headers=headers, connector=connector, timeout=timeout_obj) as session:
         responses = []
         for url in candidate_urls:
             try:
-                async with session.get(url, timeout=timeout) as resp:
+                async with session.get(url, timeout=timeout, proxy=proxy_param) as resp:
                     if 200 <= resp.status < 400:
                         text = await resp.text()
                         headers = dict(resp.headers)

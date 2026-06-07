@@ -5,7 +5,6 @@ from urllib.parse import urljoin, urlparse
 from typing import Optional, Dict, Set, List, Union
 from json import load as json_load
 from logging import getLogger
-from asyncio import sleep, gather
 from core.utils import create_session  # async context manager returning aiohttp.ClientSession
 from packaging.version import Version, InvalidVersion
 
@@ -182,123 +181,81 @@ async def detect_version(
     settings: Dict[str, Union[str, int, float]],
     fingerprints: List[Dict]
 ) -> Dict[str, Union[str, bool, List[str], None]]:
-    """
-    Detect Mailman version asynchronously using fingerprint regexes
-    on target URLs, headers, or body. Filters out invalid/empty strings
-    and normalizes versions to prevent conflicts.
-    """
-
+    """Detect Mailman version asynchronously using fingerprints."""
     base_url = base_url.rstrip("/")
     if not is_valid_url(base_url):
-        return {"error": "Invalid URL format. Must start with http:// or https:// and include a domain."}
+        return {"error": "Invalid URL format"}
 
     timeout = settings.get("timeout", 5)
     proxy = settings.get("proxy")
-    custom_user_agent = settings.get("user_agent")
-    delay = settings.get("delay", 0)  # set to 0 for speed; minimal delay
-
-    user_agents = [custom_user_agent] if custom_user_agent else [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5790.170 Safari/537.36",
-    ]
+    user_agent = settings.get("user_agent", "MailmapScanner/2.0")
 
     candidate_urls = _build_candidate_urls(base_url)
-    found_versions: Set[str] = set()
-    ua_index = 0
-    url_cache: Dict[str, str] = {}  # cache responses to avoid duplicate requests
+    found_versions = set()
 
-    async with create_session(user_agent=custom_user_agent, proxy=proxy, timeout=timeout) as session:
-        tasks = []
+    async with create_session(user_agent=user_agent, proxy=proxy, timeout=timeout) as session:
+        responses = []
+        for url in candidate_urls:
+            try:
+                async with session.get(url, timeout=timeout) as resp:
+                    if 200 <= resp.status < 400:
+                        text = await resp.text()
+                        headers = dict(resp.headers)
+                        responses.append((url, text, headers))
+                    else:
+                        logger.debug(f"Non-OK status {resp.status} for {url}")
+            except Exception as e:
+                logger.debug(f"Failed to fetch {url}: {e}")
 
-        # Build all fetch tasks for headers and body fingerprints
         for fp in fingerprints:
-            method = (fp.get("method") or "").lower()
-            location = fp.get("location") or ""
+            method = fp.get("method", "").lower()
+            location = fp.get("location", "")
             pattern_str = fp.get("pattern")
             version_label = fp.get("version")
             flags_str = fp.get("flags")
-            pattern: Optional[Pattern] = _compile_regex(pattern_str, flags_str) if pattern_str else None
-            current_ua = user_agents[ua_index % len(user_agents)]
-            ua_index += 1
-            req_headers = {
-                "User-Agent": current_ua,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            }
+            pattern = _compile_regex(pattern_str, flags_str) if pattern_str else None
 
             if method == "url":
-                url_to_check = urljoin(base_url + "/", location.lstrip("/"))
-                tasks.append((_fetch_url(session, url_to_check, req_headers, url_cache), pattern, version_label, "url"))
-
-            elif method in ("header", "body"):
-                for u in candidate_urls:
-                    tasks.append((_fetch_url(session, u, req_headers, url_cache), pattern, version_label, method, u, location))
-
-        # Execute all fetches in parallel
-        results = await gather(*[t[0] for t in tasks])
-
-        # Process fetched results
-        for i, task in enumerate(tasks):
-            content = results[i]
-            if not content:
-                continue
-
-            fp_data = task
-            method = fp_data[3]
-
-            if method == "url":
-                pattern = fp_data[1]
-                version_label = fp_data[2]
-                if pattern:
-                    ver = extract_version_from_text(content, pattern)
-                    if ver:
-                        found_versions.add(ver)
-                        logger.debug(f"[version:url] Found: {ver}")
-                elif version_label and version_label.strip().lower() != "generic":
-                    found_versions.add(version_label.strip())
+                for url, _, _ in responses:
+                    if location in url:
+                        found_versions.add(version_label.strip() if version_label else "Unknown")
+                        break
 
             elif method == "header":
-                pattern = fp_data[1]
-                version_label = fp_data[2]
-                url_checked = fp_data[4]
-                header_name = _normalize_header_location(fp_data[5])
-                header_val = None
-                try:
-                    header_val = session._response_headers(url_checked).get(header_name)
-                except Exception:
-                    header_val = None
-                if header_val:
-                    if pattern:
-                        ver = extract_version_from_text(header_val, pattern)
-                        if ver:
-                            found_versions.add(ver)
-                    else:
-                        hv = header_val.strip()
-                        if hv and (not version_label or version_label.strip().lower() == "generic"):
-                            found_versions.add(hv)
-                        elif version_label and version_label.strip().lower() != "generic":
-                            found_versions.add(version_label.strip())
+                header_key = _normalize_header_location(location)
+                for _, _, headers in responses:
+                    header_val = headers.get(header_key)
+                    if header_val:
+                        if pattern:
+                            ver = extract_version_from_text(header_val, pattern)
+                            if ver:
+                                found_versions.add(ver)
+                        else:
+                            found_versions.add(header_val.strip())
+                        break
 
             elif method == "body":
-                pattern = fp_data[1]
-                if pattern:
-                    ver = extract_version_from_text(content[:100_000], pattern)
-                    if ver:
-                        found_versions.add(ver)
+                for _, text, _ in responses:
+                    if pattern:
+                        ver = extract_version_from_text(text[:100_000], pattern)
+                        if ver:
+                            found_versions.add(ver)
+                            break
+                    else:
+                        if version_label and version_label.lower() != "generic":
+                            found_versions.add(version_label.strip())
+                            break
 
-    # Clean and normalize all collected versions
     found_versions = _clean_and_normalize(found_versions)
 
     if not found_versions:
         logger.info("No valid Mailman version detected.")
         return {"version": None}
-
     if len(found_versions) == 1:
         ver = next(iter(found_versions))
         logger.info(f"Detected Mailman version: {ver}")
         return {"version": ver}
-
-    logger.warning(f"Version conflict detected. Multiple versions found: {found_versions}")
+    logger.warning(f"Version conflict: {found_versions}")
     return {"conflict": True, "versions": sorted(found_versions)}
 
 

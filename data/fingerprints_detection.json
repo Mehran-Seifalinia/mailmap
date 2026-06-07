@@ -276,8 +276,22 @@
     "version": "Generic",
     "method": "body",
     "location": "body",
-    "pattern": "version",
-    "notes": "Generic 'version' mention"
+    "pattern": "GNU Mailman",
+    "notes": "Explicit GNU Mailman mention"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Powered by Mailman",
+    "notes": "Powered by Mailman footer"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "This is Mailman",
+    "notes": "Mailman identification phrase"
   },
   {
     "version": "Generic",
@@ -292,5 +306,12 @@
     "location": "body",
     "pattern": "mailman3",
     "notes": "Mention of mailman3"
+  },
+  {
+    "version": "Generic",
+    "method": "body",
+    "location": "body",
+    "pattern": "Mailman version [0-9]+\\.[0-9]+\\.[0-9]+",
+    "notes": "Extracts Mailman version with numbers"
   }
 ]

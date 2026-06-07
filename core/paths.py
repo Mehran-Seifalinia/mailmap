@@ -187,13 +187,21 @@ def _check_single_path(
             matched = True
             evidence = "Path name indicates Mailman-related endpoint (heuristic)."
 
+        # Map access_level to severity
+        access = item.get("access_level", "unknown")
+        if access == "sensitive":
+            severity = "high"
+        elif access == "admin_only":
+            severity = "medium"
+        else:
+            severity = "low"
         result = {
             "path": path,
             "full_url": full_url,
             "status_code": status,
             "description": item.get("description", ""),
-            "severity": item.get("severity", "low"),
-            "access_level": item.get("access_level", "unknown"),
+            "severity": severity,
+            "access_level": access,
             "found": bool(matched),
             "evidence": evidence,
         }

@@ -1,10 +1,11 @@
-from asyncio import run as asyncio_run
+from os import path
 from json import load
 from sys import exit as sys_exit
 from rich.console import Console
 from rich.traceback import install
-from core import detector, version, paths, cve_scanner
-from output import report_generator
+from core import detector, version, paths
+from core.cve_scanner import CVEScanner
+from output.report_generator import ReportGenerator
 
 install(show_locals=False)
 
@@ -137,7 +138,7 @@ async def run_scan(
                     'message': 'Mailman not found on target.'
                 }
                 if output_file:
-                    report_generator.save_report(output_file, output_format, report_data)
+                    ReportGenerator.save_report(output_file, output_format, report_data)
                     console.print(f"[bold green][+] Report saved to {output_file}[/bold green]")
                 return
 
@@ -167,13 +168,18 @@ async def run_scan(
             path_results = paths.check_paths(target, common_paths, timeout=settings.get('timeout', 5))
             for item in path_results:
                 sev = item.get("severity", "unknown")
-                typ = item.get("type", "Unknown")
-                console.print(f"[{severity_color(sev)}][!] Found:[/] {typ} - {item.get('path', 'N/A')} - Severity: {sev}")
+                desc = item.get("description", "Unknown")
+                console.print(f"[{severity_color(sev)}][!] Found:[/] {desc} - {item.get('path', 'N/A')} - Severity: {sev}")
 
         # Step 4: CVE scanning (sync)
         if scan_part in ("cve", "full"):
             ver_str = version_info.get("version") if isinstance(version_info, dict) else None
-            cve_results = cve_scanner.scan_cves(ver_str, settings)
+            cve_scanner_obj = CVEScanner(cve_data_path="data/cves.json")
+            cve_results = await cve_scanner_obj.scan(
+                detected_version=ver_str if is_valid_version(ver_str) else None,
+                base_url=target,
+                timeout=settings.get('timeout', 10)
+            )
             for cve in cve_results:
                 console.print(f"[{severity_color(cve['severity'])}][!] CVE found:[/] {cve['id']} - {cve['description']} - Severity: {cve['severity']}")
 
@@ -186,8 +192,15 @@ async def run_scan(
                 'paths': path_results,
                 'cves': cve_results,
             }
-            report_generator.save_report(output_file, output_format, report_data)
-            console.print(f"[bold green][+] Report saved to {output_file}[/bold green]")
+            rg = ReportGenerator(output_dir=path.dirname(output_file) if output_file else "output")
+            if output_format == 'json':
+                rg.generate_json(report_data, filename=path.basename(output_file))
+            elif output_format == 'html':
+                rg.generate_html(report_data, filename=path.basename(output_file))
+            elif output_format == 'md':
+                rg.generate_markdown(report_data, filename=path.basename(output_file))
+            else:
+                console.print(f"[yellow]Unsupported format: {output_format}[/yellow]")
 
     except Exception as exc:
         exit_code = handle_error(exc, verbose)

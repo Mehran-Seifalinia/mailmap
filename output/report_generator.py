@@ -90,3 +90,17 @@ class ReportGenerator:
             return html_content
         else:
             return f"<p>{escape(str(data))}</p>"
+
+def save_report(filepath: str, format: str, data: DataType) -> None:
+    """Convenience function to save report using ReportGenerator."""
+    output_dir = path.dirname(filepath) or "output"
+    filename = path.basename(filepath)
+    rg = ReportGenerator(output_dir)
+    if format == 'json':
+        rg.generate_json(data, filename)
+    elif format == 'html':
+        rg.generate_html(data, filename)
+    elif format == 'md':
+        rg.generate_markdown(data, filename)
+    else:
+        raise ValueError(f"Unsupported format: {format}")

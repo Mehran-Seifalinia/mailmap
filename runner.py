@@ -200,6 +200,10 @@ async def run_scan(
                 timeout=settings.get('timeout', 10)
             )
             for cve in cve_results:
+                if cve.get('status') != 'vulnerable':
+                    if settings.get('verbose', False):
+                        console.print(f"[dim][*] Skipped {cve['id']}: {cve.get('reason', '')}[/dim]")
+                    continue
                 console.print(f"[{severity_color(cve['severity'])}][!] CVE found:[/] {cve['id']} - {cve['description']} - Severity: {cve['severity']}")
 
         # Step 5: Save report

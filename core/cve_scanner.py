@@ -78,6 +78,7 @@ class CVEScanner:
         headers: Optional[Dict[str, str]] = None,
         payload: Optional[Dict] = None,
         evidence_regex: Optional[str] = None,
+        expected_status: int = 200,
         timeout: int = 10,
     ) -> Tuple[bool, str]:
         """
@@ -107,13 +108,13 @@ class CVEScanner:
             ) as response:
 
                 # Check HTTP status code
-                if response.status != 200:
+                if response.status != expected_status:
                     try:
                         text = await response.text()
                         snippet = text[:100]
                     except Exception:
                         snippet = "Unable to read response body"
-                    return False, f"Unexpected status code {response.status}: {snippet}"
+                    return False, f"Unexpected status code {response.status} (expected {expected_status}): {snippet}"
 
                 try:
                     text = await response.text()
@@ -223,6 +224,7 @@ class CVEScanner:
         headers = test_info.get("headers", None)
         payload = test_info.get("data", None)
         evidence_regex = test_info.get("evidence_regex") or test_info.get("evidence")
+        expected_status = test_info.get("expected_status", 200)
 
         # Construct URL if only path is given
         if not url and path:
@@ -239,7 +241,7 @@ class CVEScanner:
 
         # Perform the test if URL is available
         if url:
-            test_passed, reason = await self.perform_test(session, method, url, headers, payload, evidence_regex, timeout)
+            test_passed, reason = await self.perform_test(session, method, url, headers, payload, evidence_regex, expected_status, timeout)
             return {
                 "id": cve_id,
                 "description": description,
